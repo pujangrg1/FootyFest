@@ -121,6 +121,26 @@ export async function getTournamentsForCurrentUser() {
     return [];
   }
 
+  // Get user profile to check role
+  try {
+    const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+    const userData = userDoc.exists() ? userDoc.data() : {};
+    const userRole = userData.role || 'spectator';
+
+    // If user is admin, return all tournaments
+    if (userRole === 'admin') {
+      const snapshot = await getDocs(collection(db, TOURNAMENTS_COLLECTION));
+      return snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return { id: doc.id, ...convertTournamentData(data) };
+      });
+    }
+  } catch (error) {
+    // If we can't check the role, fall back to regular user behavior
+    console.warn('Could not check user role:', error.message);
+  }
+
+  // Otherwise, return only tournaments created by the user
   const q = query(
     collection(db, TOURNAMENTS_COLLECTION),
     where('organizerId', '==', currentUser.uid),
@@ -147,6 +167,19 @@ export async function updateTournament(tournamentId, updates) {
     throw new Error('You must be logged in to update a tournament');
   }
 
+  // Check if user is admin
+  let isAdmin = false;
+  try {
+    const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      isAdmin = userData.role === 'admin';
+    }
+  } catch (error) {
+    // If we can't check the role, fall back to regular user behavior
+    console.warn('Could not check user role:', error.message);
+  }
+
   const tournamentRef = doc(db, TOURNAMENTS_COLLECTION, tournamentId);
   const tournamentDoc = await getDoc(tournamentRef);
   
@@ -155,7 +188,8 @@ export async function updateTournament(tournamentId, updates) {
   }
 
   const tournamentData = tournamentDoc.data();
-  if (tournamentData.organizerId !== currentUser.uid) {
+  // Allow update if user is admin or is the organizer
+  if (!isAdmin && tournamentData.organizerId !== currentUser.uid) {
     throw new Error('You can only update your own tournaments');
   }
 
@@ -185,6 +219,19 @@ export async function deleteTournament(tournamentId) {
     throw new Error('You must be logged in to delete a tournament');
   }
 
+  // Check if user is admin
+  let isAdmin = false;
+  try {
+    const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      isAdmin = userData.role === 'admin';
+    }
+  } catch (error) {
+    // If we can't check the role, fall back to regular user behavior
+    console.warn('Could not check user role:', error.message);
+  }
+
   const tournamentRef = doc(db, TOURNAMENTS_COLLECTION, tournamentId);
   const tournamentDoc = await getDoc(tournamentRef);
   
@@ -193,7 +240,8 @@ export async function deleteTournament(tournamentId) {
   }
 
   const tournamentData = tournamentDoc.data();
-  if (tournamentData.organizerId !== currentUser.uid) {
+  // Allow delete if user is admin or is the organizer
+  if (!isAdmin && tournamentData.organizerId !== currentUser.uid) {
     throw new Error('You can only delete your own tournaments');
   }
 
@@ -207,6 +255,19 @@ export async function updateTournamentTeams(tournamentId, openTeams, teams35Plus
     throw new Error('You must be logged in to update teams');
   }
 
+  // Check if user is admin
+  let isAdmin = false;
+  try {
+    const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      isAdmin = userData.role === 'admin';
+    }
+  } catch (error) {
+    // If we can't check the role, fall back to regular user behavior
+    console.warn('Could not check user role:', error.message);
+  }
+
   const tournamentRef = doc(db, TOURNAMENTS_COLLECTION, tournamentId);
   const tournamentDoc = await getDoc(tournamentRef);
   
@@ -215,7 +276,8 @@ export async function updateTournamentTeams(tournamentId, openTeams, teams35Plus
   }
 
   const tournamentData = tournamentDoc.data();
-  if (tournamentData.organizerId !== currentUser.uid) {
+  // Allow update if user is admin or is the organizer
+  if (!isAdmin && tournamentData.organizerId !== currentUser.uid) {
     throw new Error('You can only update your own tournaments');
   }
 

@@ -1,6 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, FlatList, SafeAreaView, TouchableOpacity, Alert, Platform } from 'react-native';
-import { Text, FAB, Card, Button } from 'react-native-paper';
+import { Text, FAB, Card, Button, Chip } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
@@ -10,11 +10,37 @@ import { setTournaments, setLoading, setError } from '../../store/slices/tournam
 import { clearAuth } from '../../store/slices/authSlice';
 import { authService } from '../../services/auth';
 import { showAlert } from '../../utils/alert';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../../firebase/config';
 
 export default function TournamentListScreen() {
   const navigation = useNavigation();
   const dispatch = useDispatch();
   const { items, loading } = useSelector((state) => state.tournaments);
+  const [userRole, setUserRole] = useState(null);
+  const [organizerNames, setOrganizerNames] = useState({});
+
+  // Fetch user role
+  useEffect(() => {
+    const fetchUserRole = async () => {
+      const currentUser = authService.getCurrentUser();
+      if (currentUser && db) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setUserRole(userData.role || 'spectator');
+          } else {
+            setUserRole('spectator');
+          }
+        } catch (error) {
+          console.warn('Could not fetch user role:', error.message);
+          setUserRole('spectator');
+        }
+      }
+    };
+    fetchUserRole();
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -22,6 +48,45 @@ export default function TournamentListScreen() {
       try {
         const tournaments = await getTournamentsForCurrentUser();
         dispatch(setTournaments(tournaments));
+        
+        // If admin, fetch organizer names for tournaments that don't have organizerName
+        if (userRole === 'admin' && db) {
+          const namesToFetch = {};
+          tournaments.forEach((tournament) => {
+            if (!tournament.organizerName && tournament.organizerId) {
+              namesToFetch[tournament.organizerId] = tournament.id;
+            }
+          });
+          
+          // Fetch organizer names
+          const namePromises = Object.entries(namesToFetch).map(async ([organizerId, tournamentId]) => {
+            try {
+              const userDoc = await getDoc(doc(db, 'users', organizerId));
+              if (userDoc.exists()) {
+                const userData = userDoc.data();
+                return {
+                  tournamentId,
+                  organizerName: userData.displayName || userData.email || 'Unknown Organizer',
+                };
+              }
+            } catch (error) {
+              console.warn(`Failed to fetch organizer for tournament ${tournamentId}:`, error.message);
+            }
+            return null;
+          });
+          
+          const fetchedNames = await Promise.all(namePromises);
+          const namesMap = {};
+          fetchedNames.forEach((result) => {
+            if (result) {
+              namesMap[result.tournamentId] = result.organizerName;
+            }
+          });
+          
+          if (Object.keys(namesMap).length > 0) {
+            setOrganizerNames(namesMap);
+          }
+        }
       } catch (e) {
         dispatch(setError(e.message));
       } finally {
@@ -29,7 +94,7 @@ export default function TournamentListScreen() {
       }
     };
     fetchData();
-  }, [dispatch]);
+  }, [dispatch, userRole]);
 
   const handleSignOut = () => {
     console.log('Sign out button clicked');
@@ -99,9 +164,20 @@ export default function TournamentListScreen() {
       <View style={styles.container}>
         {/* Header with Sign Out */}
         <View style={styles.header}>
-          <Text variant="headlineSmall" style={styles.title}>
-            My Tournaments
-          </Text>
+          <View style={styles.titleContainer}>
+            <Text variant="headlineSmall" style={styles.title}>
+              {userRole === 'admin' ? 'All Tournaments (Admin)' : 'My Tournaments'}
+            </Text>
+            {userRole === 'admin' && (
+              <Chip 
+                icon="shield" 
+                style={styles.adminChip}
+                textStyle={styles.adminChipText}
+              >
+                Admin View
+              </Chip>
+            )}
+          </View>
           {Platform.OS === 'web' ? (
             <Button
               mode="outlined"
@@ -122,7 +198,11 @@ export default function TournamentListScreen() {
         </View>
         {items.length === 0 && !loading ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No tournaments yet. Create your first tournament!</Text>
+            <Text style={styles.emptyText}>
+              {userRole === 'admin' 
+                ? 'No tournaments found in the system.' 
+                : 'No tournaments yet. Create your first tournament!'}
+            </Text>
           </View>
         ) : (
           <FlatList
@@ -136,7 +216,18 @@ export default function TournamentListScreen() {
               >
                 <Card style={styles.card}>
                   <Card.Content style={styles.cardContent}>
-                    <Text style={styles.cardTitle}>{item.name || 'Untitled Tournament'}</Text>
+                    <View style={styles.cardHeader}>
+                      <Text style={styles.cardTitle}>{item.name || 'Untitled Tournament'}</Text>
+                      {userRole === 'admin' && (item.organizerName || organizerNames[item.id]) && (
+                        <Chip 
+                          icon="account" 
+                          style={styles.organizerChip}
+                          textStyle={styles.organizerChipText}
+                        >
+                          {item.organizerName || organizerNames[item.id] || 'Unknown Organizer'}
+                        </Chip>
+                      )}
+                    </View>
                     
                     <View style={styles.infoContainer}>
                       {/* Start Date */}
@@ -227,9 +318,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
   },
+  titleContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   title: {
     color: '#fff',
     fontWeight: 'bold',
+  },
+  adminChip: {
+    backgroundColor: '#4CAF50',
+    height: 28,
+  },
+  adminChipText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   signOutButton: {
     flexDirection: 'row',
@@ -284,11 +390,28 @@ const styles = StyleSheet.create({
   cardContent: {
     padding: 10,
   },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   cardTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
+    flex: 1,
+  },
+  organizerChip: {
+    backgroundColor: '#6C63FF',
+    height: 24,
+  },
+  organizerChipText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '500',
   },
   infoContainer: {
     gap: 4,

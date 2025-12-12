@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, SafeAreaView, KeyboardAvoidingView, Platform, TouchableOpacity, Modal, Pressable } from 'react-native';
+import { View, StyleSheet, ScrollView, SafeAreaView, KeyboardAvoidingView, Platform, TouchableOpacity, Modal, Pressable, Alert } from 'react-native';
 import { TextInput, Button, Text, HelperText, Card } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import WebDateTimePicker from '../../components/web/WebDateTimePicker';
+import CalendarPicker from '../../components/web/CalendarPicker';
 import { format } from 'date-fns';
 import { createTournament } from '../../services/tournaments';
 import { useDispatch } from 'react-redux';
@@ -112,6 +113,55 @@ export default function CreateTournamentScreen() {
     
     // Reset error
     setError('');
+  };
+
+  const handleCancel = () => {
+    // Check if there's any data entered
+    const hasData = 
+      tournamentName ||
+      startDate ||
+      endDate ||
+      venue ||
+      totalTeams ||
+      totalTeams35Plus ||
+      organizerName ||
+      contactEmail ||
+      additionalRules;
+
+    if (!hasData) {
+      // No data entered, just go back
+      clearForm();
+      navigation.goBack();
+      return;
+    }
+
+    // Data entered, ask for confirmation
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('Are you sure you want to cancel? All entered data will be lost.');
+      if (confirmed) {
+        clearForm();
+        navigation.goBack();
+      }
+    } else {
+      Alert.alert(
+        'Cancel Tournament Creation',
+        'Are you sure you want to cancel? All entered data will be lost.',
+        [
+          {
+            text: 'Continue Editing',
+            style: 'cancel',
+          },
+          {
+            text: 'Cancel',
+            style: 'destructive',
+            onPress: () => {
+              clearForm();
+              navigation.goBack();
+            },
+          },
+        ]
+      );
+    }
   };
 
   const onCreate = async () => {
@@ -236,14 +286,50 @@ export default function CreateTournamentScreen() {
                 </Pressable>
                 
                 {Platform.OS === 'web' ? (
-                  <WebDateTimePicker
-                    value={startDate || new Date()}
-                    mode="date"
-                    display="default"
-                    onChange={onStartDateChange}
-                    minimumDate={new Date()}
-                    style={styles.webDatePicker}
-                  />
+                  <Modal
+                    visible={showStartDatePicker}
+                    transparent={true}
+                    animationType="fade"
+                    onRequestClose={() => {
+                      setShowStartDatePicker(false);
+                      setTempStartDate(null);
+                    }}
+                  >
+                    <Pressable
+                      style={styles.modalOverlay}
+                      onPress={() => {
+                        setShowStartDatePicker(false);
+                        setTempStartDate(null);
+                      }}
+                    >
+                      <Pressable 
+                        style={styles.calendarModalContent}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        <View style={styles.calendarModalHeader}>
+                          <Text style={styles.calendarModalTitle}>Select Start Date</Text>
+                          <Button onPress={() => {
+                            setShowStartDatePicker(false);
+                            setTempStartDate(null);
+                          }}>Close</Button>
+                        </View>
+                        <CalendarPicker
+                          value={tempStartDate || startDate || new Date()}
+                          onChange={(event, date) => {
+                            if (date) {
+                              setTempStartDate(date);
+                              setStartDate(date);
+                            }
+                          }}
+                          onClose={() => {
+                            setShowStartDatePicker(false);
+                            setTempStartDate(null);
+                          }}
+                          minimumDate={new Date()}
+                        />
+                      </Pressable>
+                    </Pressable>
+                  </Modal>
                 ) : Platform.OS === 'ios' ? (
                   <Modal
                     visible={showStartDatePicker}
@@ -313,14 +399,50 @@ export default function CreateTournamentScreen() {
                 </Pressable>
                 
                 {Platform.OS === 'web' ? (
-                  <WebDateTimePicker
-                    value={endDate || startDate || new Date()}
-                    mode="date"
-                    display="default"
-                    onChange={onEndDateChange}
-                    minimumDate={startDate || new Date()}
-                    style={styles.webDatePicker}
-                  />
+                  <Modal
+                    visible={showEndDatePicker}
+                    transparent={true}
+                    animationType="fade"
+                    onRequestClose={() => {
+                      setShowEndDatePicker(false);
+                      setTempEndDate(null);
+                    }}
+                  >
+                    <Pressable
+                      style={styles.modalOverlay}
+                      onPress={() => {
+                        setShowEndDatePicker(false);
+                        setTempEndDate(null);
+                      }}
+                    >
+                      <Pressable 
+                        style={styles.calendarModalContent}
+                        onPress={(e) => e.stopPropagation()}
+                      >
+                        <View style={styles.calendarModalHeader}>
+                          <Text style={styles.calendarModalTitle}>Select End Date</Text>
+                          <Button onPress={() => {
+                            setShowEndDatePicker(false);
+                            setTempEndDate(null);
+                          }}>Close</Button>
+                        </View>
+                        <CalendarPicker
+                          value={tempEndDate || endDate || startDate || new Date()}
+                          onChange={(event, date) => {
+                            if (date) {
+                              setTempEndDate(date);
+                              setEndDate(date);
+                            }
+                          }}
+                          onClose={() => {
+                            setShowEndDatePicker(false);
+                            setTempEndDate(null);
+                          }}
+                          minimumDate={startDate || new Date()}
+                        />
+                      </Pressable>
+                    </Pressable>
+                  </Modal>
                 ) : Platform.OS === 'ios' ? (
                   <Modal
                     visible={showEndDatePicker}
@@ -538,16 +660,30 @@ export default function CreateTournamentScreen() {
 
             {error ? <HelperText type="error" style={styles.errorText}>{error}</HelperText> : null}
             
-            <Button
-              mode="contained"
-              onPress={onCreate}
-              loading={loading}
-              style={styles.createButton}
-              contentStyle={styles.createButtonContent}
-              icon="send"
-            >
-              Validate & Create Tournament
-            </Button>
+            <View style={styles.buttonContainer}>
+              <Button
+                mode="outlined"
+                onPress={handleCancel}
+                disabled={loading}
+                style={styles.cancelButton}
+                contentStyle={styles.cancelButtonContent}
+                icon="close"
+                textColor="#ff4444"
+              >
+                Cancel
+              </Button>
+              
+              <Button
+                mode="contained"
+                onPress={onCreate}
+                loading={loading}
+                style={styles.createButton}
+                contentStyle={styles.createButtonContent}
+                icon="send"
+              >
+                Validate & Create Tournament
+              </Button>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -623,9 +759,22 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 8,
   },
-  createButton: {
+  buttonContainer: {
+    flexDirection: 'row',
+    gap: 12,
     marginTop: 16,
     marginBottom: 20,
+  },
+  cancelButton: {
+    flex: 1,
+    borderColor: '#ff4444',
+    borderRadius: 12,
+  },
+  cancelButtonContent: {
+    paddingVertical: 8,
+  },
+  createButton: {
+    flex: 2,
     backgroundColor: '#4CAF50',
     borderRadius: 12,
   },
@@ -709,5 +858,24 @@ const styles = StyleSheet.create({
   modalOptionTextSelected: {
     color: '#4CAF50',
     fontWeight: 'bold',
+  },
+  calendarModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '90%',
+  },
+  calendarModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  calendarModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
   },
 });

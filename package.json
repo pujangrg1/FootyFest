@@ -10,8 +10,8 @@
     "android": "node start-expo.js --android",
     "ios": "node start-expo.js --ios",
     "web": "expo start --web",
-    "build:web": "NODE_ENV=production expo export:web",
-    "build:web:staging": "NODE_ENV=staging expo export:web",
+    "build:web": "NODE_ENV=production expo export --platform web --output-dir web-build",
+    "build:web:staging": "NODE_ENV=staging expo export --platform web --output-dir web-build",
     "serve:web": "npx serve web-build",
     "prebuild:web": "npm run clean:web",
     "clean:web": "rm -rf web-build"

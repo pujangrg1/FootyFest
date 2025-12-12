@@ -1,0 +1,66 @@
+{
+  "expo": {
+    "name": "Footy Fest",
+    "slug": "soccer-tournament-app",
+    "version": "1.0.0",
+    "orientation": "default",
+    "scheme": "soccer-tournament",
+    "userInterfaceStyle": "light",
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/images/footy-fest-logo.png",
+      "name": "Footy Fest",
+      "shortName": "Footy Fest",
+      "lang": "en",
+      "scope": "/",
+      "themeColor": "#4CAF50",
+      "backgroundColor": "#1a1a2e",
+      "display": "standalone",
+      "orientation": "any",
+      "meta": {
+        "description": "Footy Fest - Manage soccer tournaments, teams, matches, and live updates all in one place.",
+        "keywords": "soccer, football, tournament, management, matches, teams, live updates",
+        "og:title": "Footy Fest - Soccer Tournament Management",
+        "og:description": "Manage soccer tournaments, teams, matches, and live updates all in one place.",
+        "og:type": "website",
+        "twitter:card": "summary_large_image",
+        "twitter:title": "Footy Fest - Soccer Tournament Management",
+        "twitter:description": "Manage soccer tournaments, teams, matches, and live updates all in one place."
+      }
+    },
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#4CAF50"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.soccertournament.app"
+    },
+    "android": {
+      "package": "com.soccertournament.app"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app accesses your photos to let you upload team logos and player photos."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#4CAF50"
+        }
+      ],
+      "expo-asset"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "soccer-tournament-app"
+      }
+    }
+  }
+}

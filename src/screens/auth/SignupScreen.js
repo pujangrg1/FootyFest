@@ -1,40 +1,71 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
-import { TextInput, Button, Text, HelperText, SegmentedButtons } from 'react-native-paper';
+import { TextInput, Button, Text, HelperText, Checkbox } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import { authService } from '../../services/auth';
 import { useDispatch } from 'react-redux';
-import { setUser } from '../../store/slices/authSlice';
+import { setUser, setProfile } from '../../store/slices/authSlice';
 
 export default function SignupScreen() {
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('spectator');
+  const [selectedRoles, setSelectedRoles] = useState(['spectator']); // Array of selected roles
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigation = useNavigation();
   const dispatch = useDispatch();
 
+  const toggleRole = (role) => {
+    setSelectedRoles(prev => {
+      if (prev.includes(role)) {
+        // Remove role, but ensure at least one role is selected
+        const newRoles = prev.filter(r => r !== role);
+        return newRoles.length > 0 ? newRoles : ['spectator'];
+      } else {
+        // Add role
+        return [...prev, role];
+      }
+    });
+  };
+
   const onSignup = async () => {
     setLoading(true);
     setError('');
-    const { user, error: authError } = await authService.signUpWithEmail(
+    
+    // Ensure at least one role is selected
+    if (selectedRoles.length === 0) {
+      setError('Please select at least one role');
+      setLoading(false);
+      return;
+    }
+    
+    const { user, error: authError, isNewUser } = await authService.signUpWithEmail(
       email,
       password,
       displayName,
       phone,
-      role,
+      selectedRoles, // Pass array of roles
     );
     setLoading(false);
 
     if (authError) {
       setError(authError);
     } else if (user) {
-      // Include role in the user data so RootNavigator can use it immediately
-      dispatch(setUser({ uid: user.uid, email: user.email, phone: user.phoneNumber, role: role }));
+      // Fetch updated profile with roles
+      const { profile } = await authService.getUserProfile(user.uid);
+      if (profile) {
+        dispatch(setProfile(profile));
+      }
+      dispatch(setUser({ uid: user.uid, email: user.email, phone: user.phoneNumber }));
+      
+      if (!isNewUser) {
+        // User already existed, show message
+        setError('Account updated with new roles. Please sign in.');
+      }
     }
   };
 
@@ -97,39 +128,89 @@ export default function SignupScreen() {
         secureTextEntry
         style={styles.input}
       />
-      <Text style={styles.label}>Role</Text>
-      <View style={styles.segmentedContainer}>
-        <SegmentedButtons
-          value={role}
-          onValueChange={setRole}
-          buttons={[
-            { 
-              value: 'organizer', 
-              label: 'Organizer',
-              style: { flex: 1, minWidth: 0 }
-            },
-            { 
-              value: 'team', 
-              label: 'Teams',
-              style: { flex: 1, minWidth: 0 }
-            },
-            { 
-              value: 'spectator', 
-              label: 'Spectator',
-              style: { flex: 1, minWidth: 0 }
-            },
+      <Text style={styles.label}>Select Your Role(s) *</Text>
+      <Text style={styles.labelHint}>You can select multiple roles. You can switch between them after signing in.</Text>
+      <View style={styles.rolesContainer}>
+        <TouchableOpacity
+          style={[
+            styles.roleOption,
+            selectedRoles.includes('organizer') && styles.roleOptionSelected
           ]}
-          style={styles.segmented}
-          density="medium"
-          theme={{
-            colors: {
-              secondaryContainer: '#4CAF50',
-              onSecondaryContainer: '#fff',
-              outline: '#fff',
-              onSurface: '#fff',
-            },
-          }}
-        />
+          onPress={() => toggleRole('organizer')}
+        >
+          <View style={styles.roleOptionContent}>
+            <Ionicons 
+              name={selectedRoles.includes('organizer') ? 'checkbox' : 'checkbox-outline'} 
+              size={24} 
+              color={selectedRoles.includes('organizer') ? '#4CAF50' : '#888'} 
+            />
+            <View style={styles.roleOptionText}>
+              <Text style={[
+                styles.roleOptionTitle,
+                selectedRoles.includes('organizer') && styles.roleOptionTitleSelected
+              ]}>
+                Organizer
+              </Text>
+              <Text style={styles.roleOptionDescription}>
+                Create and manage tournaments
+              </Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.roleOption,
+            selectedRoles.includes('team') && styles.roleOptionSelected
+          ]}
+          onPress={() => toggleRole('team')}
+        >
+          <View style={styles.roleOptionContent}>
+            <Ionicons 
+              name={selectedRoles.includes('team') ? 'checkbox' : 'checkbox-outline'} 
+              size={24} 
+              color={selectedRoles.includes('team') ? '#4CAF50' : '#888'} 
+            />
+            <View style={styles.roleOptionText}>
+              <Text style={[
+                styles.roleOptionTitle,
+                selectedRoles.includes('team') && styles.roleOptionTitleSelected
+              ]}>
+                Team
+              </Text>
+              <Text style={styles.roleOptionDescription}>
+                Join tournaments and manage your team
+              </Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.roleOption,
+            selectedRoles.includes('spectator') && styles.roleOptionSelected
+          ]}
+          onPress={() => toggleRole('spectator')}
+        >
+          <View style={styles.roleOptionContent}>
+            <Ionicons 
+              name={selectedRoles.includes('spectator') ? 'checkbox' : 'checkbox-outline'} 
+              size={24} 
+              color={selectedRoles.includes('spectator') ? '#4CAF50' : '#888'} 
+            />
+            <View style={styles.roleOptionText}>
+              <Text style={[
+                styles.roleOptionTitle,
+                selectedRoles.includes('spectator') && styles.roleOptionTitleSelected
+              ]}>
+                Spectator
+              </Text>
+              <Text style={styles.roleOptionDescription}>
+                View tournaments and match schedules
+              </Text>
+            </View>
+          </View>
+        </TouchableOpacity>
       </View>
       {error ? <HelperText type="error">{error}</HelperText> : null}
         <View style={styles.buttonContainer}>
@@ -216,13 +297,51 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 4,
     color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
-  segmentedContainer: {
+  labelHint: {
+    marginTop: 4,
+    marginBottom: 12,
+    color: '#aaa',
+    fontSize: 12,
+  },
+  rolesContainer: {
     marginBottom: 12,
     width: '100%',
   },
-  segmented: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  roleOption: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  roleOptionSelected: {
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    borderColor: '#4CAF50',
+  },
+  roleOptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  roleOptionText: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  roleOptionTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  roleOptionTitleSelected: {
+    color: '#4CAF50',
+  },
+  roleOptionDescription: {
+    color: '#aaa',
+    fontSize: 12,
   },
 });
 

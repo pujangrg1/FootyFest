@@ -532,9 +532,33 @@ function MatchesTab({ tournament, tournamentId }) {
     
     // Set up real-time listener for matches
     const unsubscribe = subscribeToMatchesForTournament(tournamentId, (matchesData) => {
-      setMatches(matchesData);
+      // Sort by status priority: Live > Scheduled > Completed
+      // Within each status, sort by scheduled time
+      const sortedMatches = [...matchesData].sort((a, b) => {
+        // Status priority: live = 0, scheduled = 1, completed = 2
+        const getStatusPriority = (status) => {
+          if (status === 'live') return 0;
+          if (status === 'scheduled') return 1;
+          return 2; // completed or any other status
+        };
+        
+        const statusA = getStatusPriority(a.status);
+        const statusB = getStatusPriority(b.status);
+        
+        // If different statuses, sort by status priority
+        if (statusA !== statusB) {
+          return statusA - statusB;
+        }
+        
+        // If same status, sort by scheduled time
+        if (!a.scheduledTime) return 1;
+        if (!b.scheduledTime) return -1;
+        return new Date(a.scheduledTime) - new Date(b.scheduledTime);
+      });
+      
+      setMatches(sortedMatches);
       // Extract unique groups from matches
-      const uniqueGroups = [...new Set(matchesData.map(m => m.group).filter(Boolean))];
+      const uniqueGroups = [...new Set(sortedMatches.map(m => m.group).filter(Boolean))];
       setGroups(uniqueGroups.map(name => ({ name, teams: [] })));
       setLoading(false);
     });

@@ -6,6 +6,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../../../firebase/config';
 import { createTeam } from '../../services/teams';
+import { showAlert } from '../../utils/alert';
 
 const POSITIONS = [
   'Goalkeeper',
@@ -17,15 +18,52 @@ const POSITIONS = [
 // Helper function to upload image to Firebase Storage
 const uploadImage = async (uri, path) => {
   try {
-    const response = await fetch(uri);
-    const blob = await response.blob();
+    // Check if storage is available
+    if (!storage) {
+      console.warn('Firebase Storage is not available, skipping image upload');
+      return null;
+    }
+
+    console.log('Uploading image from URI:', uri, 'to path:', path);
+    
+    // On web, local file URIs might not work with fetch
+    // Try to convert to blob differently
+    let blob;
+    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
+      // Already a blob URL, fetch it
+      const response = await fetch(uri);
+      blob = await response.blob();
+    } else if (Platform.OS === 'web') {
+      // For web, try to fetch the file
+      try {
+        const response = await fetch(uri);
+        blob = await response.blob();
+      } catch (fetchError) {
+        console.warn('Failed to fetch image for upload, skipping:', fetchError);
+        return null;
+      }
+    } else {
+      // For mobile, use fetch
+      const response = await fetch(uri);
+      blob = await response.blob();
+    }
+
+    if (!blob) {
+      console.warn('Could not create blob from image, skipping upload');
+      return null;
+    }
+
     const storageRef = ref(storage, path);
+    console.log('Uploading to storage...');
     await uploadBytes(storageRef, blob);
+    console.log('Getting download URL...');
     const downloadURL = await getDownloadURL(storageRef);
+    console.log('Image uploaded successfully:', downloadURL);
     return downloadURL;
   } catch (error) {
     console.error('Error uploading image:', error);
-    throw error;
+    // Don't throw - return null so team creation can continue
+    return null;
   }
 };
 
@@ -50,7 +88,7 @@ export default function CreateTeamScreen({ onTeamCreated }) {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permissionResult.granted) {
-        Alert.alert('Permission Required', 'Please allow access to your photo library to select images.');
+        showAlert('Permission Required', 'Please allow access to your photo library to select images.');
         return;
       }
 
@@ -66,7 +104,7 @@ export default function CreateTeamScreen({ onTeamCreated }) {
       }
     } catch (error) {
       console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image');
+      showAlert('Error', 'Failed to pick image');
     }
   };
 
@@ -75,7 +113,7 @@ export default function CreateTeamScreen({ onTeamCreated }) {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permissionResult.granted) {
-        Alert.alert('Permission Required', 'Please allow access to your photo library to select images.');
+        showAlert('Permission Required', 'Please allow access to your photo library to select images.');
         return;
       }
 
@@ -91,28 +129,28 @@ export default function CreateTeamScreen({ onTeamCreated }) {
       }
     } catch (error) {
       console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image');
+      showAlert('Error', 'Failed to pick image');
     }
   };
 
   const addPlayer = () => {
     if (!newPlayerName.trim()) {
-      Alert.alert('Error', 'Please enter player name');
+      showAlert('Error', 'Please enter player name');
       return;
     }
     if (!newPlayerJersey.trim()) {
-      Alert.alert('Error', 'Please enter jersey number');
+      showAlert('Error', 'Please enter jersey number');
       return;
     }
     if (!newPlayerPosition) {
-      Alert.alert('Error', 'Please select player position');
+      showAlert('Error', 'Please select player position');
       return;
     }
 
     // Check if jersey number already exists
     const jerseyExists = players.some(p => p.jerseyNumber === newPlayerJersey.trim());
     if (jerseyExists) {
-      Alert.alert('Error', 'This jersey number is already assigned to another player');
+      showAlert('Error', 'This jersey number is already assigned to another player');
       return;
     }
 
@@ -138,59 +176,40 @@ export default function CreateTeamScreen({ onTeamCreated }) {
 
   const handleCreateTeam = async () => {
     if (!teamName.trim()) {
-      Alert.alert('Error', 'Please enter team name');
+      showAlert('Error', 'Please enter team name');
       return;
     }
     if (!managerName.trim()) {
-      Alert.alert('Error', 'Please enter manager name');
+      showAlert('Error', 'Please enter manager name');
       return;
     }
     if (players.length === 0) {
-      Alert.alert('Error', 'Please add at least one player to the team');
+      showAlert('Error', 'Please add at least one player to the team');
       return;
     }
 
+    console.log('Starting team creation...');
     setLoading(true);
+    let logoUrl = null;
+    let playersWithPhotos = [];
+    
     try {
-      // Generate a unique team ID for file paths
-      const teamId = `team_${Date.now()}`;
+      // For now, skip image uploads to test if that's causing the issue
+      // Images can be added later via team editing
+      console.log('Skipping image uploads for faster team creation...');
       
-      // Upload team logo if exists
-      let logoUrl = null;
-      if (teamLogo) {
-        try {
-          logoUrl = await uploadImage(teamLogo, `teams/${teamId}/logo.jpg`);
-        } catch (error) {
-          console.error('Failed to upload team logo:', error);
-          // Continue without logo
-        }
-      }
+      // Prepare players without photos for now
+      playersWithPhotos = players.map(player => ({
+        id: player.id,
+        name: player.name,
+        jerseyNumber: player.jerseyNumber,
+        position: player.position,
+        photoURL: null,
+      }));
+      console.log('Players prepared:', playersWithPhotos.length);
 
-      // Upload player photos
-      const playersWithPhotos = await Promise.all(
-        players.map(async (player, index) => {
-          let photoUrl = null;
-          if (player.photoUri) {
-            try {
-              photoUrl = await uploadImage(
-                player.photoUri,
-                `teams/${teamId}/players/${player.id}.jpg`
-              );
-            } catch (error) {
-              console.error(`Failed to upload photo for player ${player.name}:`, error);
-              // Continue without photo
-            }
-          }
-          return {
-            id: player.id,
-            name: player.name,
-            jerseyNumber: player.jerseyNumber,
-            position: player.position,
-            photoURL: photoUrl,
-          };
-        })
-      );
-
+      // Create team in Firestore
+      console.log('Creating team in Firestore...');
       const team = await createTeam({
         name: teamName.trim(),
         yearEstablished: yearEstablished.trim(),
@@ -199,15 +218,36 @@ export default function CreateTeamScreen({ onTeamCreated }) {
         managerName: managerName.trim(),
         logo: logoUrl,
       });
+      console.log('Team created successfully:', team);
       
-      Alert.alert('Success', 'Team created successfully!');
+      // Reset loading state immediately
+      setLoading(false);
+      setUploadingLogo(false);
+      setUploadingPlayerPhoto(false);
+      
+      // Call callback to update parent component (this will trigger navigation/state update)
+      console.log('Calling onTeamCreated callback...');
       if (onTeamCreated) {
         onTeamCreated(team);
       }
+      console.log('Callback executed');
+      
+      // Show success message after a brief delay
+      setTimeout(() => {
+        if (Platform.OS === 'web') {
+          window.alert('Team created successfully!');
+        } else {
+          Alert.alert('Success', 'Team created successfully!');
+        }
+      }, 100);
+      
     } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to create team');
-    } finally {
+      console.error('Error creating team:', error);
+      console.error('Error stack:', error.stack);
       setLoading(false);
+      setUploadingLogo(false);
+      setUploadingPlayerPhoto(false);
+      showAlert('Error', error.message || 'Failed to create team. Please check console for details.');
     }
   };
 

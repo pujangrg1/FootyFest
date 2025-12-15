@@ -121,14 +121,16 @@ export async function getTournamentsForCurrentUser() {
     return [];
   }
 
-  // Get user profile to check role
+  // Get user profile to check roles
   try {
     const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
     const userData = userDoc.exists() ? userDoc.data() : {};
-    const userRole = userData.role || 'spectator';
+    // Support both old single role and new roles array
+    const userRoles = userData.roles || (userData.role ? [userData.role] : ['spectator']);
+    const isAdmin = userRoles.includes('admin');
 
     // If user is admin, return all tournaments
-    if (userRole === 'admin') {
+    if (isAdmin) {
       const snapshot = await getDocs(collection(db, TOURNAMENTS_COLLECTION));
       return snapshot.docs.map((doc) => {
         const data = doc.data();
@@ -173,7 +175,9 @@ export async function updateTournament(tournamentId, updates) {
     const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
     if (userDoc.exists()) {
       const userData = userDoc.data();
-      isAdmin = userData.role === 'admin';
+      // Support both old single role and new roles array
+      const userRoles = userData.roles || (userData.role ? [userData.role] : []);
+      isAdmin = userRoles.includes('admin');
     }
   } catch (error) {
     // If we can't check the role, fall back to regular user behavior
@@ -225,7 +229,9 @@ export async function deleteTournament(tournamentId) {
     const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
     if (userDoc.exists()) {
       const userData = userDoc.data();
-      isAdmin = userData.role === 'admin';
+      // Support both old single role and new roles array
+      const userRoles = userData.roles || (userData.role ? [userData.role] : []);
+      isAdmin = userRoles.includes('admin');
     }
   } catch (error) {
     // If we can't check the role, fall back to regular user behavior
@@ -261,7 +267,9 @@ export async function updateTournamentTeams(tournamentId, openTeams, teams35Plus
     const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
     if (userDoc.exists()) {
       const userData = userDoc.data();
-      isAdmin = userData.role === 'admin';
+      // Support both old single role and new roles array
+      const userRoles = userData.roles || (userData.role ? [userData.role] : []);
+      isAdmin = userRoles.includes('admin');
     }
   } catch (error) {
     // If we can't check the role, fall back to regular user behavior

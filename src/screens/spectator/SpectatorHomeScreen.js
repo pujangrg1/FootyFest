@@ -11,6 +11,7 @@ import { getMatchesForTournament, subscribeToMatchesForTournament } from '../../
 import { authService } from '../../services/auth';
 import { clearAuth } from '../../store/slices/authSlice';
 import MatchTimer from '../../components/MatchTimer';
+import RoleSwitcher from '../../components/RoleSwitcher';
 
 export default function SpectatorHomeScreen({ navigation }) {
   const dispatch = useDispatch();
@@ -87,23 +88,26 @@ export default function SpectatorHomeScreen({ navigation }) {
           <Text variant="headlineSmall" style={styles.headerTitle}>
             Spectator View
           </Text>
-          {Platform.OS === 'web' ? (
-            <Button
-              mode="outlined"
-              onPress={handleSignOut}
-              icon="logout"
-              textColor="#ff4444"
-              buttonColor="rgba(255, 68, 68, 0.1)"
-              style={styles.signOutButtonWeb}
-              compact
-            >
-              Sign Out
-            </Button>
-          ) : (
-            <TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
-              <Ionicons name="log-out-outline" size={24} color="#ff4444" />
-            </TouchableOpacity>
-          )}
+          <View style={styles.headerActions}>
+            <RoleSwitcher />
+            {Platform.OS === 'web' ? (
+              <Button
+                mode="outlined"
+                onPress={handleSignOut}
+                icon="logout"
+                textColor="#ff4444"
+                buttonColor="rgba(255, 68, 68, 0.1)"
+                style={styles.signOutButtonWeb}
+                compact
+              >
+                Sign Out
+              </Button>
+            ) : (
+              <TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
+                <Ionicons name="log-out-outline" size={24} color="#ff4444" />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* Tabs */}
@@ -361,8 +365,25 @@ function SchedulesTab() {
               // Add new matches from this tournament
               const updatedMatches = [...otherMatches, ...matchesWithTournament];
               
-              // Sort by scheduled time
+              // Sort by status priority: Live > Scheduled > Completed
+              // Within each status, sort by scheduled time
               updatedMatches.sort((a, b) => {
+                // Status priority: live = 0, scheduled = 1, completed = 2
+                const getStatusPriority = (status) => {
+                  if (status === 'live') return 0;
+                  if (status === 'scheduled') return 1;
+                  return 2; // completed or any other status
+                };
+                
+                const statusA = getStatusPriority(a.status);
+                const statusB = getStatusPriority(b.status);
+                
+                // If different statuses, sort by status priority
+                if (statusA !== statusB) {
+                  return statusA - statusB;
+                }
+                
+                // If same status, sort by scheduled time
                 if (!a.scheduledTime) return 1;
                 if (!b.scheduledTime) return -1;
                 return new Date(a.scheduledTime) - new Date(b.scheduledTime);
@@ -931,6 +952,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a1a2e',
     borderBottomWidth: 1,
     borderBottomColor: '#2a2a3e',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   headerTitle: {
     color: '#fff',

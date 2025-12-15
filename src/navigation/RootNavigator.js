@@ -4,11 +4,12 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { onAuthStateChanged } from 'firebase/auth';
 import { useDispatch, useSelector } from 'react-redux';
 import { auth } from '../../firebase/config';
-import { setUser, clearAuth } from '../store/slices/authSlice';
+import { setUser, setProfile, setSelectedRole, clearAuth } from '../store/slices/authSlice';
 import { authService } from '../services/auth';
 import LoginScreen from '../screens/auth/LoginScreen';
 import SignupScreen from '../screens/auth/SignupScreen';
 import LoadingScreen from '../screens/auth/LoadingScreen';
+import RoleSelectionScreen from '../screens/auth/RoleSelectionScreen';
 import TournamentListScreen from '../screens/tournament/TournamentListScreen';
 import CreateTournamentScreen from '../screens/tournament/CreateTournamentScreen';
 import TournamentDetailsScreen from '../screens/tournament/TournamentDetailsScreen';
@@ -74,11 +75,10 @@ function SpectatorStack() {
 export default function RootNavigator() {
   const [initializing, setInitializing] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
-  const [userRole, setUserRole] = useState(null);
   const dispatch = useDispatch();
   
-  // Get role from Redux state (set during signup)
-  const reduxUser = useSelector((state) => state.auth.user);
+  // Get auth state from Redux
+  const { user, roles, selectedRole } = useSelector((state) => state.auth);
 
   useEffect(() => {
     let timeout;
@@ -117,28 +117,35 @@ export default function RootNavigator() {
     const handleAuthStateChange = async (user) => {
       clearTimeout(timeout);
       if (user) {
-        // Fetch user profile to get role
+        // Fetch user profile to get roles
         try {
           const { profile } = await authService.getUserProfile(user.uid);
-          const role = profile?.role || 'spectator';
-          setUserRole(role);
           dispatch(setUser({ 
             uid: user.uid, 
             email: user.email, 
-            phone: user.phoneNumber,
-            role: role 
+            phone: user.phoneNumber
           }));
+          if (profile) {
+            dispatch(setProfile(profile));
+            // Set selected role if not already set (will be set by setProfile reducer)
+            // But ensure it's set if profile has roles
+            if (profile.roles && profile.roles.length > 0) {
+              // The setProfile reducer will handle setting selectedRole
+              // But we can also explicitly set it here if needed
+            }
+          }
           setAuthenticated(true);
         } catch (error) {
           console.error('Error fetching user profile:', error);
-          setUserRole('spectator');
-          dispatch(setUser({ uid: user.uid, email: user.email, phone: user.phoneNumber, role: 'spectator' }));
+          // Default to spectator if profile fetch fails
+          dispatch(setUser({ uid: user.uid, email: user.email, phone: user.phoneNumber }));
+          dispatch(setProfile({ roles: ['spectator'] }));
+          dispatch(setSelectedRole('spectator'));
           setAuthenticated(true);
         }
       } else {
         dispatch(clearAuth());
         setAuthenticated(false);
-        setUserRole(null);
       }
       setInitializing(false);
     };
@@ -185,28 +192,40 @@ export default function RootNavigator() {
     return <LoadingScreen />;
   }
 
-  // Determine which stack to show based on user role
-  // Priority: Redux state role (set during signup) > Firestore profile role
+  // Determine which stack to show based on selected role
   const getAppComponent = () => {
-    const effectiveRole = (reduxUser?.role || userRole || '').toLowerCase();
-    console.log('Effective role:', effectiveRole, 'Redux role:', reduxUser?.role, 'Firestore role:', userRole);
+    const role = (selectedRole || '').toLowerCase();
     
     // Check for team-related roles (team, manager, teams)
-    if (effectiveRole === 'team' || effectiveRole === 'manager' || effectiveRole === 'teams') {
+    if (role === 'team' || role === 'manager' || role === 'teams') {
       return TeamStack;
     }
     // Check for spectator role
-    if (effectiveRole === 'spectator') {
+    if (role === 'spectator') {
       return SpectatorStack;
+    }
+    // Check for admin role (uses organizer stack but with admin privileges)
+    if (role === 'admin') {
+      return OrganizerStack;
     }
     // Default to organizer view for 'organizer' role or any other role
     return OrganizerStack;
   };
 
+  // Check if user needs to select a role (has multiple roles but none selected, or single role but not set)
+  const needsRoleSelection = authenticated && roles && roles.length > 0 && !selectedRole;
+
+  // Use selectedRole as key to force re-render when role changes
+  const AppComponent = getAppComponent();
+
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Navigator screenOptions={{ headerShown: false }} key={selectedRole || 'no-role'}>
       {authenticated ? (
-        <Stack.Screen name="App" component={getAppComponent()} />
+        needsRoleSelection ? (
+          <Stack.Screen name="RoleSelection" component={RoleSelectionScreen} />
+        ) : (
+          <Stack.Screen name="App" component={AppComponent} />
+        )
       ) : (
         <>
           <Stack.Screen name="Login" component={LoginScreen} />

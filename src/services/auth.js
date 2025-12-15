@@ -18,7 +18,8 @@ const isAuthValid = () => {
 
 export const authService = {
   // Email/Password Sign Up
-  signUpWithEmail: async (email, password, displayName, phone, role = 'spectator') => {
+  // roles can be a single role string or an array of roles
+  signUpWithEmail: async (email, password, displayName, phone, roles = ['spectator']) => {
     try {
       // Check if auth is properly initialized (not a mock)
       if (!auth || !auth.app) {
@@ -28,7 +29,54 @@ export const authService = {
         };
       }
 
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      // Normalize roles to array
+      const rolesArray = Array.isArray(roles) ? roles : [roles];
+      // Ensure at least one role
+      if (rolesArray.length === 0) {
+        rolesArray.push('spectator');
+      }
+
+      // Check if user already exists
+      let userCredential;
+      let isNewUser = false;
+      
+      try {
+        // Try to sign in first
+        userCredential = await signInWithEmailAndPassword(auth, email, password);
+        // User exists, update their roles
+        const user = userCredential.user;
+        
+        if (db) {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            const existingRoles = userDoc.exists() 
+              ? (userDoc.data().roles || (userDoc.data().role ? [userDoc.data().role] : ['spectator']))
+              : ['spectator'];
+            
+            // Merge roles (avoid duplicates)
+            const mergedRoles = [...new Set([...existingRoles, ...rolesArray])];
+            
+            await setDoc(doc(db, 'users', user.uid), {
+              uid: user.uid,
+              email: user.email,
+              displayName: displayName || userDoc.data()?.displayName || '',
+              phone: phone || userDoc.data()?.phone || null,
+              roles: mergedRoles,
+              photoURL: userDoc.data()?.photoURL || null,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+          } catch (dbError) {
+            console.warn('Failed to update user document in Firestore:', dbError.message);
+          }
+        }
+        
+        return { user, error: null, isNewUser: false };
+      } catch (signInError) {
+        // User doesn't exist, create new account
+        isNewUser = true;
+        userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      }
+
       const user = userCredential.user;
 
       // Update profile
@@ -46,7 +94,7 @@ export const authService = {
             email: user.email,
             displayName,
             phone: phone || null,
-            role: role,
+            roles: rolesArray, // Store as array
             photoURL: null,
             createdAt: new Date().toISOString(),
           });
@@ -58,9 +106,9 @@ export const authService = {
         console.warn('Firestore not available - user document not created');
       }
 
-      return { user, error: null };
+      return { user, error: null, isNewUser };
     } catch (error) {
-      return { user: null, error: error.message };
+      return { user: null, error: error.message, isNewUser: false };
     }
   },
 
@@ -113,7 +161,7 @@ export const authService = {
               phone: user.phoneNumber,
               email: null,
               displayName: null,
-              role: 'spectator',
+              roles: ['spectator'],
               photoURL: null,
               createdAt: new Date().toISOString(),
             });
@@ -162,7 +210,15 @@ export const authService = {
       }
       const userDoc = await getDoc(doc(db, 'users', uid));
       if (userDoc.exists()) {
-        return { profile: userDoc.data(), error: null };
+        const data = userDoc.data();
+        // Normalize roles: convert single role to array, ensure roles array exists
+        let roles = data.roles;
+        if (!roles) {
+          roles = data.role ? [data.role] : ['spectator'];
+        } else if (!Array.isArray(roles)) {
+          roles = [roles];
+        }
+        return { profile: { ...data, roles }, error: null };
       }
       return { profile: null, error: 'User not found' };
     } catch (error) {

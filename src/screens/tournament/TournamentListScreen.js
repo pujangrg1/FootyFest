@@ -12,6 +12,7 @@ import { authService } from '../../services/auth';
 import { showAlert } from '../../utils/alert';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebase/config';
+import RoleSwitcher from '../../components/RoleSwitcher';
 
 export default function TournamentListScreen() {
   const navigation = useNavigation();
@@ -178,23 +179,26 @@ export default function TournamentListScreen() {
               </Chip>
             )}
           </View>
-          {Platform.OS === 'web' ? (
-            <Button
-              mode="outlined"
-              onPress={handleSignOut}
-              icon="logout"
-              textColor="#ff4444"
-              buttonColor="rgba(255, 68, 68, 0.1)"
-              style={styles.signOutButtonWeb}
-            >
-              Sign Out
-            </Button>
-          ) : (
-            <TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
-              <Ionicons name="log-out-outline" size={24} color="#ff4444" />
-              <Text style={styles.signOutText}>Sign Out</Text>
-            </TouchableOpacity>
-          )}
+          <View style={styles.headerActions}>
+            <RoleSwitcher />
+            {Platform.OS === 'web' ? (
+              <Button
+                mode="outlined"
+                onPress={handleSignOut}
+                icon="logout"
+                textColor="#ff4444"
+                buttonColor="rgba(255, 68, 68, 0.1)"
+                style={styles.signOutButtonWeb}
+              >
+                Sign Out
+              </Button>
+            ) : (
+              <TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
+                <Ionicons name="log-out-outline" size={24} color="#ff4444" />
+                <Text style={styles.signOutText}>Sign Out</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
         {items.length === 0 && !loading ? (
           <View style={styles.emptyContainer}>
@@ -317,6 +321,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   titleContainer: {
     flex: 1,

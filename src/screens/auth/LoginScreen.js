@@ -6,7 +6,7 @@ import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authService } from '../../services/auth';
 import { useDispatch } from 'react-redux';
-import { setUser } from '../../store/slices/authSlice';
+import { setUser, setProfile } from '../../store/slices/authSlice';
 
 const REMEMBERED_EMAIL_KEY = '@soccer_tournament:remembered_email';
 
@@ -48,14 +48,27 @@ export default function LoginScreen() {
     setLoading(true);
     setError('');
     const { user, error: authError } = await authService.signInWithEmail(email, password);
-    setLoading(false);
-
+    
     if (authError) {
+      setLoading(false);
       setError(authError);
     } else if (user) {
       // Save email for next time
       await saveRememberedEmail(email);
       dispatch(setUser({ uid: user.uid, email: user.email, phone: user.phoneNumber }));
+      
+      // Fetch user profile to get roles
+      try {
+        const { profile } = await authService.getUserProfile(user.uid);
+        if (profile) {
+          dispatch(setProfile(profile));
+        }
+      } catch (error) {
+        console.error('Error fetching user profile:', error);
+        // Continue even if profile fetch fails
+      }
+      
+      setLoading(false);
     }
   };
 

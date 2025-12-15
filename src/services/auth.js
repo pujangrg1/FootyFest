@@ -1,14 +1,16 @@
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  signOut,
+  signOut as firebaseSignOut,
   updateProfile,
   sendPasswordResetEmail,
   signInWithPhoneNumber,
   RecaptchaVerifier,
 } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../firebase/config';
+import { Platform } from 'react-native';
+import { logUserActivity } from './activityLog';
 
 // Helper to check if auth is properly initialized (not a mock)
 // Real Firebase auth has an 'app' property, mock auth doesn't
@@ -65,6 +67,19 @@ export const authService = {
               photoURL: userDoc.data()?.photoURL || null,
               updatedAt: new Date().toISOString(),
             }, { merge: true });
+            
+            // Log role update (if roles changed)
+            if (JSON.stringify(existingRoles) !== JSON.stringify(mergedRoles)) {
+              await logUserActivity({
+                userId: user.uid,
+                email: user.email,
+                activityType: 'role_change',
+                metadata: {
+                  previousRoles: existingRoles,
+                  newRoles: mergedRoles,
+                },
+              });
+            }
           } catch (dbError) {
             console.warn('Failed to update user document in Firestore:', dbError.message);
           }
@@ -98,6 +113,18 @@ export const authService = {
             photoURL: null,
             createdAt: new Date().toISOString(),
           });
+          
+          // Log new account creation
+          await logUserActivity({
+            userId: user.uid,
+            email: user.email,
+            activityType: 'signup',
+            metadata: {
+              displayName,
+              roles: rolesArray,
+              method: 'email',
+            },
+          });
         } catch (dbError) {
           console.warn('Failed to create user document in Firestore:', dbError.message);
           // Continue even if Firestore fails - auth user is created
@@ -123,7 +150,44 @@ export const authService = {
         };
       }
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      return { user: userCredential.user, error: null };
+      const user = userCredential.user;
+      
+      // Verify user document exists in Firestore
+      if (db) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          if (!userDoc.exists()) {
+            // User document doesn't exist - sign them out and return error
+            await firebaseSignOut(auth);
+            return { 
+              user: null, 
+              error: 'Your account has been deleted. Please contact support if you believe this is an error.' 
+            };
+          }
+          
+          // Update last login timestamp
+          await setDoc(doc(db, 'users', user.uid), {
+            lastLoginAt: serverTimestamp(),
+            lastLoginAtISO: new Date().toISOString(),
+          }, { merge: true });
+          
+          // Log successful login
+          await logUserActivity({
+            userId: user.uid,
+            email: user.email,
+            activityType: 'login',
+            metadata: {
+              method: 'email',
+              platform: Platform.OS,
+            },
+          });
+        } catch (dbError) {
+          console.warn('Error checking user document:', dbError.message);
+          // If we can't check, allow login but log warning
+        }
+      }
+      
+      return { user, error: null };
     } catch (error) {
       return { user: null, error: error.message };
     }
@@ -154,7 +218,9 @@ export const authService = {
       if (db) {
         try {
           const userDoc = await getDoc(doc(db, 'users', user.uid));
-          if (!userDoc.exists()) {
+          const isNewUser = !userDoc.exists();
+          
+          if (isNewUser) {
             // Create user document if it doesn't exist
             await setDoc(doc(db, 'users', user.uid), {
               uid: user.uid,
@@ -164,6 +230,33 @@ export const authService = {
               roles: ['spectator'],
               photoURL: null,
               createdAt: new Date().toISOString(),
+            });
+            
+            // Log phone signup
+            await logUserActivity({
+              userId: user.uid,
+              email: user.email || user.phoneNumber,
+              activityType: 'signup',
+              metadata: {
+                method: 'phone',
+                phone: user.phoneNumber,
+              },
+            });
+          } else {
+            // Update last login and log phone login
+            await setDoc(doc(db, 'users', user.uid), {
+              lastLoginAt: serverTimestamp(),
+              lastLoginAtISO: new Date().toISOString(),
+            }, { merge: true });
+            
+            await logUserActivity({
+              userId: user.uid,
+              email: user.email || user.phoneNumber,
+              activityType: 'login',
+              metadata: {
+                method: 'phone',
+                platform: Platform.OS,
+              },
             });
           }
         } catch (dbError) {
@@ -180,7 +273,21 @@ export const authService = {
   // Sign Out
   signOut: async () => {
     try {
-      await signOut(auth);
+      const currentUser = auth.currentUser;
+      await firebaseSignOut(auth);
+      
+      // Log logout if user was logged in
+      if (currentUser && db) {
+        await logUserActivity({
+          userId: currentUser.uid,
+          email: currentUser.email,
+          activityType: 'logout',
+          metadata: {
+            platform: Platform.OS,
+          },
+        });
+      }
+      
       return { error: null };
     } catch (error) {
       return { error: error.message };
@@ -220,6 +327,7 @@ export const authService = {
         }
         return { profile: { ...data, roles }, error: null };
       }
+      // User document doesn't exist - return explicit error
       return { profile: null, error: 'User not found' };
     } catch (error) {
       return { profile: null, error: error.message };

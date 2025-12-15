@@ -16,6 +16,7 @@ import TournamentDetailsScreen from '../screens/tournament/TournamentDetailsScre
 import MatchDetailsScreen from '../screens/tournament/MatchDetailsScreen';
 import TeamHomeScreen from '../screens/team/TeamHomeScreen';
 import SpectatorHomeScreen from '../screens/spectator/SpectatorHomeScreen';
+import ActivityLogsScreen from '../screens/admin/ActivityLogsScreen';
 import { MaterialIcons } from '@expo/vector-icons';
 
 const Stack = createNativeStackNavigator();
@@ -50,6 +51,7 @@ function OrganizerStack() {
       <Stack.Screen name="OrganizerHome" component={OrganizerTabs} />
       <Stack.Screen name="Tournament Details" component={TournamentDetailsScreen} />
       <Stack.Screen name="Match Details" component={MatchDetailsScreen} />
+      <Stack.Screen name="Activity Logs" component={ActivityLogsScreen} />
     </Stack.Navigator>
   );
 }
@@ -119,7 +121,22 @@ export default function RootNavigator() {
       if (user) {
         // Fetch user profile to get roles
         try {
-          const { profile } = await authService.getUserProfile(user.uid);
+          const { profile, error: profileError } = await authService.getUserProfile(user.uid);
+          
+          // If profile doesn't exist (user was deleted from Firestore), sign them out
+          if (!profile || profileError === 'User not found') {
+            console.warn('User document not found in Firestore, signing out...');
+            try {
+              await authService.signOut();
+            } catch (signOutError) {
+              console.error('Error signing out deleted user:', signOutError);
+            }
+            dispatch(clearAuth());
+            setAuthenticated(false);
+            setInitializing(false);
+            return;
+          }
+          
           dispatch(setUser({ 
             uid: user.uid, 
             email: user.email, 
@@ -137,11 +154,23 @@ export default function RootNavigator() {
           setAuthenticated(true);
         } catch (error) {
           console.error('Error fetching user profile:', error);
-          // Default to spectator if profile fetch fails
-          dispatch(setUser({ uid: user.uid, email: user.email, phone: user.phoneNumber }));
-          dispatch(setProfile({ roles: ['spectator'] }));
-          dispatch(setSelectedRole('spectator'));
-          setAuthenticated(true);
+          // If profile fetch fails with "not found", sign out the user
+          if (error.message && error.message.includes('not found')) {
+            console.warn('User document not found, signing out...');
+            try {
+              await authService.signOut();
+            } catch (signOutError) {
+              console.error('Error signing out deleted user:', signOutError);
+            }
+            dispatch(clearAuth());
+            setAuthenticated(false);
+          } else {
+            // For other errors, default to spectator (backward compatibility)
+            dispatch(setUser({ uid: user.uid, email: user.email, phone: user.phoneNumber }));
+            dispatch(setProfile({ roles: ['spectator'] }));
+            dispatch(setSelectedRole('spectator'));
+            setAuthenticated(true);
+          }
         }
       } else {
         dispatch(clearAuth());

@@ -169,33 +169,52 @@ export default function TournamentDetailsScreen() {
                 dispatch(setTournaments(updatedList));
               }}
               onArchive={async () => {
-                Alert.alert(
-                  'Archive Tournament',
-                  'Are you sure you want to archive this tournament? Archived tournaments are hidden from normal views but can be viewed by admins for analysis. You can still access it later if needed.',
-                  [
-                    {
-                      text: 'Cancel',
-                      style: 'cancel',
-                    },
-                    {
-                      text: 'Archive',
-                      style: 'destructive',
-                      onPress: async () => {
-                        try {
-                          await archiveTournament(tournamentId);
-                          const updated = await getTournamentById(tournamentId);
-                          setTournament(updated);
-                          const updatedList = tournaments.map(t => t.id === tournamentId ? updated : t);
-                          dispatch(setTournaments(updatedList));
-                          Alert.alert('Success', 'Tournament archived successfully');
-                          navigation.goBack();
-                        } catch (error) {
-                          Alert.alert('Error', error.message || 'Failed to archive tournament');
-                        }
+                const message = 'Are you sure you want to archive this tournament? Archived tournaments are hidden from normal views but can be viewed by admins for analysis. You can still access it later if needed.';
+                
+                if (Platform.OS === 'web') {
+                  const confirmed = window.confirm(`Archive Tournament\n\n${message}`);
+                  if (!confirmed) {
+                    return;
+                  }
+                  
+                  try {
+                    await archiveTournament(tournamentId);
+                    // Remove archived tournament from Redux state instead of updating it
+                    const filteredList = tournaments.filter(t => t.id !== tournamentId);
+                    dispatch(setTournaments(filteredList));
+                    window.alert('Tournament archived successfully');
+                    navigation.goBack();
+                  } catch (error) {
+                    window.alert('Error: ' + (error.message || 'Failed to archive tournament'));
+                  }
+                } else {
+                  Alert.alert(
+                    'Archive Tournament',
+                    message,
+                    [
+                      {
+                        text: 'Cancel',
+                        style: 'cancel',
                       },
-                    },
-                  ]
-                );
+                      {
+                        text: 'Archive',
+                        style: 'destructive',
+                        onPress: async () => {
+                          try {
+                            await archiveTournament(tournamentId);
+                            // Remove archived tournament from Redux state instead of updating it
+                            const filteredList = tournaments.filter(t => t.id !== tournamentId);
+                            dispatch(setTournaments(filteredList));
+                            Alert.alert('Success', 'Tournament archived successfully');
+                            navigation.goBack();
+                          } catch (error) {
+                            Alert.alert('Error', error.message || 'Failed to archive tournament');
+                          }
+                        },
+                      },
+                    ]
+                  );
+                }
               }}
             />
           )}

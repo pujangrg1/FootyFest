@@ -18,14 +18,30 @@ export default function TournamentListScreen() {
   const navigation = useNavigation();
   const dispatch = useDispatch();
   const { items, loading } = useSelector((state) => state.tournaments);
+  const { profile, selectedRole } = useSelector((state) => state.auth);
   const [userRole, setUserRole] = useState(null);
   const [organizerNames, setOrganizerNames] = useState({});
   const [showArchived, setShowArchived] = useState(false);
   const [archivedTournaments, setArchivedTournaments] = useState([]);
   const [archivedLoading, setArchivedLoading] = useState(false);
 
-  // Fetch user role
+  // Filter out archived tournaments from items when not viewing archived
+  const activeTournaments = showArchived ? archivedTournaments : items.filter(t => !t.archived);
+
+  // Fetch user role - check both Redux state and Firestore
   useEffect(() => {
+    // First check Redux state (faster)
+    if (profile && profile.roles) {
+      const userRoles = Array.isArray(profile.roles) ? profile.roles : [profile.roles];
+      const isAdmin = userRoles.includes('admin');
+      if (isAdmin) {
+        console.log('Admin role detected from Redux profile:', userRoles);
+        setUserRole('admin');
+        return;
+      }
+    }
+    
+    // Fallback to Firestore if Redux doesn't have it
     const fetchUserRole = async () => {
       const currentUser = authService.getCurrentUser();
       if (currentUser && db) {
@@ -34,9 +50,12 @@ export default function TournamentListScreen() {
           if (userDoc.exists()) {
             const userData = userDoc.data();
             const userRoles = userData.roles || (userData.role ? [userData.role] : ['spectator']);
-            const isAdmin = userRoles.includes('admin');
-            setUserRole(isAdmin ? 'admin' : (userData.role || 'spectator'));
+            const isAdmin = Array.isArray(userRoles) ? userRoles.includes('admin') : userRoles === 'admin';
+            const detectedRole = isAdmin ? 'admin' : (userData.role || 'spectator');
+            console.log('User role from Firestore:', { userRoles, detectedRole });
+            setUserRole(detectedRole);
           } else {
+            console.log('User document not found, defaulting to spectator');
             setUserRole('spectator');
           }
         } catch (error) {
@@ -46,7 +65,7 @@ export default function TournamentListScreen() {
       }
     };
     fetchUserRole();
-  }, []);
+  }, [profile]);
 
   // Fetch archived tournaments for admins
   useEffect(() => {
@@ -261,8 +280,8 @@ export default function TournamentListScreen() {
             )}
           </View>
         </View>
-        {/* Archive Toggle for Admins */}
-        {userRole === 'admin' && (
+        {/* Admin Controls */}
+        {(userRole === 'admin' || (profile?.roles && (Array.isArray(profile.roles) ? profile.roles.includes('admin') : profile.roles === 'admin'))) && (
           <View style={styles.archiveToggleContainer}>
             <Button
               mode={showArchived ? 'contained' : 'outlined'}
@@ -274,10 +293,20 @@ export default function TournamentListScreen() {
             >
               {showArchived ? 'View Active Tournaments' : 'View Archived Tournaments'}
             </Button>
+            <Button
+              mode="contained"
+              onPress={() => navigation.navigate('Activity Logs')}
+              icon="chart-line"
+              textColor="#fff"
+              buttonColor="#4CAF50"
+              style={styles.activityLogsButton}
+            >
+              View Activity Logs
+            </Button>
           </View>
         )}
 
-        {(showArchived ? archivedTournaments : items).length === 0 && !loading && !archivedLoading ? (
+        {activeTournaments.length === 0 && !loading && !archivedLoading ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>
               {showArchived
@@ -289,7 +318,7 @@ export default function TournamentListScreen() {
           </View>
         ) : (
           <FlatList
-            data={showArchived ? archivedTournaments : items}
+            data={activeTournaments}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.listContent}
             renderItem={({ item }) => (
@@ -438,10 +467,18 @@ const styles = StyleSheet.create({
   },
   archiveToggleContainer: {
     marginBottom: 16,
-    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 12,
+    flexWrap: 'wrap',
   },
   archiveToggleButton: {
     borderColor: '#ffa500',
+    minWidth: 200,
+  },
+  activityLogsButton: {
+    borderColor: '#4CAF50',
+    minWidth: 200,
   },
   cardTitleRow: {
     flexDirection: 'row',

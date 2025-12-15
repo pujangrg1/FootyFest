@@ -36,36 +36,78 @@ export default function SignupScreen() {
     setLoading(true);
     setError('');
     
-    // Ensure at least one role is selected
-    if (selectedRoles.length === 0) {
-      setError('Please select at least one role');
-      setLoading(false);
-      return;
-    }
-    
-    const { user, error: authError, isNewUser } = await authService.signUpWithEmail(
-      email,
-      password,
-      displayName,
-      phone,
-      selectedRoles, // Pass array of roles
-    );
-    setLoading(false);
-
-    if (authError) {
-      setError(authError);
-    } else if (user) {
-      // Fetch updated profile with roles
-      const { profile } = await authService.getUserProfile(user.uid);
-      if (profile) {
-        dispatch(setProfile(profile));
+    try {
+      // Ensure at least one role is selected
+      if (selectedRoles.length === 0) {
+        setError('Please select at least one role');
+        setLoading(false);
+        return;
       }
+      
+      console.log('Starting signup process...');
+      const { user, error: authError, isNewUser } = await authService.signUpWithEmail(
+        email,
+        password,
+        displayName,
+        phone,
+        selectedRoles, // Pass array of roles
+      );
+      console.log('Signup response:', { user: !!user, error: authError, isNewUser });
+
+      if (authError) {
+        console.error('Signup error:', authError);
+        setError(authError);
+        setLoading(false);
+        // Keep the error visible for at least 2 seconds before any navigation
+        setTimeout(() => {
+          // Error will remain visible, navigation handled by RootNavigator if user was signed out
+        }, 2000);
+        return;
+      }
+
+      if (!user) {
+        console.error('No user returned from signup');
+        setError('Signup failed. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      // Set user immediately - don't wait for profile fetch
       dispatch(setUser({ uid: user.uid, email: user.email, phone: user.phoneNumber }));
       
+      // Set loading to false immediately - navigation will handle the rest
+      setLoading(false);
+      console.log('Signup process completed');
+      
       if (!isNewUser) {
-        // User already existed, show message
-        setError('Account updated with new roles. Please sign in.');
+        // User already existed and added new roles
+        // Fetch updated profile to show success message
+        try {
+          const { profile } = await authService.getUserProfile(user.uid);
+          if (profile) {
+            dispatch(setProfile(profile));
+            const newRoles = selectedRoles.filter(role => 
+              !(profile.roles || []).some(existingRole => existingRole === role)
+            );
+            if (newRoles.length > 0) {
+              setError(`Successfully added new role(s): ${newRoles.join(', ')}. You can now switch between roles.`);
+            } else {
+              setError('Your account has been updated. You can now switch between roles.');
+            }
+          }
+        } catch (profileErr) {
+          console.warn('Could not fetch updated profile:', profileErr);
+          setError('New roles added successfully. Please sign in to access them.');
+        }
+      } else {
+        // For new users, let RootNavigator handle profile fetch via auth state change
+        // This prevents blocking and allows proper navigation
+        console.log('New user created, RootNavigator will handle profile fetch');
       }
+    } catch (error) {
+      console.error('Unexpected error during signup:', error);
+      setError(error.message || 'An unexpected error occurred. Please try again.');
+      setLoading(false);
     }
   };
 

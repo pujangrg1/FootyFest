@@ -14,19 +14,28 @@ export const showAlert = (title, message, buttons = []) => {
     }
 
     // For confirm dialogs, use window.confirm
-    if (buttons.length === 2) {
+    if (buttons.length >= 2) {
       const confirmed = window.confirm(`${title}\n\n${message}`);
       if (confirmed) {
-        // Find the non-cancel button and call its onPress
-        const confirmButton = buttons.find(btn => btn.style !== 'cancel');
+        // Find the non-cancel button (usually the last one or the one without 'cancel' style)
+        const confirmButton = buttons.find(btn => btn.style !== 'cancel') || buttons[buttons.length - 1];
         if (confirmButton && confirmButton.onPress) {
-          confirmButton.onPress();
+          try {
+            confirmButton.onPress();
+          } catch (error) {
+            console.error('Error in alert button onPress:', error);
+            window.alert(`Error: ${error.message}`);
+          }
         }
       } else {
-        // Find cancel button and call its onPress
+        // Find cancel button and call its onPress if it exists
         const cancelButton = buttons.find(btn => btn.style === 'cancel');
         if (cancelButton && cancelButton.onPress) {
-          cancelButton.onPress();
+          try {
+            cancelButton.onPress();
+          } catch (error) {
+            console.error('Error in cancel button onPress:', error);
+          }
         }
       }
       return;
@@ -34,7 +43,12 @@ export const showAlert = (title, message, buttons = []) => {
 
     // For single button, just call onPress
     if (buttons.length === 1 && buttons[0].onPress) {
-      buttons[0].onPress();
+      try {
+        buttons[0].onPress();
+      } catch (error) {
+        console.error('Error in alert button onPress:', error);
+        window.alert(`Error: ${error.message}`);
+      }
       return;
     }
   }

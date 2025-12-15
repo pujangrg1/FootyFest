@@ -6,6 +6,7 @@ import {
   sendPasswordResetEmail,
   signInWithPhoneNumber,
   RecaptchaVerifier,
+  fetchSignInMethodsForEmail,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../firebase/config';
@@ -38,59 +39,209 @@ export const authService = {
         rolesArray.push('spectator');
       }
 
-      // Check if user already exists
+      // Check if user already exists - if they do, prevent signup
       let userCredential;
       let isNewUser = false;
       
+      // First, check if email is already registered (without signing in)
       try {
-        // Try to sign in first
-        userCredential = await signInWithEmailAndPassword(auth, email, password);
-        // User exists, update their roles
-        const user = userCredential.user;
+        const signInMethods = await fetchSignInMethodsForEmail(auth, email);
+        console.log('Sign-in methods for email:', signInMethods);
         
-        if (db) {
-          try {
-            const userDoc = await getDoc(doc(db, 'users', user.uid));
-            const existingRoles = userDoc.exists() 
-              ? (userDoc.data().roles || (userDoc.data().role ? [userDoc.data().role] : ['spectator']))
-              : ['spectator'];
-            
-            // Merge roles (avoid duplicates)
-            const mergedRoles = [...new Set([...existingRoles, ...rolesArray])];
-            
-            await setDoc(doc(db, 'users', user.uid), {
-              uid: user.uid,
-              email: user.email,
-              displayName: displayName || userDoc.data()?.displayName || '',
-              phone: phone || userDoc.data()?.phone || null,
-              roles: mergedRoles,
-              photoURL: userDoc.data()?.photoURL || null,
-              updatedAt: new Date().toISOString(),
-            }, { merge: true });
-            
-            // Log role update (if roles changed)
-            if (JSON.stringify(existingRoles) !== JSON.stringify(mergedRoles)) {
-              await logUserActivity({
-                userId: user.uid,
-                email: user.email,
-                activityType: 'role_change',
-                metadata: {
-                  previousRoles: existingRoles,
-                  newRoles: mergedRoles,
-                },
+        if (signInMethods && signInMethods.length > 0) {
+          // Email is already registered - check if user wants to add new roles
+          console.log('Email is already registered, checking if user wants to add new roles...');
+          
+          if (db) {
+            // We need to get the user ID to check Firestore, but we can't without signing in
+            // So we'll try to sign in with the provided password to get the UID
+            // If password is wrong, we'll return error
+            try {
+              console.log('Attempting to sign in to check existing user roles...');
+              const tempCredential = await signInWithEmailAndPassword(auth, email, password);
+              const tempUser = tempCredential.user;
+              console.log('Successfully signed in to check roles for user:', tempUser.uid);
+              
+              // Check Firestore document
+              const userDoc = await getDoc(doc(db, 'users', tempUser.uid));
+              console.log('User document exists:', userDoc.exists());
+              
+              if (userDoc.exists()) {
+                // User exists with profile - check if they're adding new roles
+                const existingData = userDoc.data();
+                const existingRoles = existingData.roles || (existingData.role ? [existingData.role] : ['spectator']);
+                const existingRolesArray = Array.isArray(existingRoles) ? existingRoles : [existingRoles];
+                
+                // Normalize role names to lowercase for comparison
+                const normalizedExistingRoles = existingRolesArray.map(r => String(r).toLowerCase().trim());
+                const normalizedNewRoles = rolesArray.map(r => String(r).toLowerCase().trim());
+                
+                console.log('Checking roles for existing user:', {
+                  existingRoles: existingRolesArray,
+                  normalizedExisting: normalizedExistingRoles,
+                  requestedRoles: rolesArray,
+                  normalizedRequested: normalizedNewRoles
+                });
+                
+                // Check if user is trying to add any new roles
+                const newRoles = rolesArray.filter(role => {
+                  const normalizedRole = String(role).toLowerCase().trim();
+                  return !normalizedExistingRoles.includes(normalizedRole);
+                });
+                
+                console.log('New roles to add:', newRoles);
+                
+                if (newRoles.length === 0) {
+                  // User already has all the roles they're trying to add
+                  console.log('User already has all requested roles');
+                  await firebaseSignOut(auth);
+                  return { 
+                    user: null, 
+                    error: 'You already have all the selected roles. Please sign in instead.', 
+                    isNewUser: false 
+                  };
+                }
+                
+                // User is adding new roles - merge them (preserve original case from existing roles)
+                const mergedRoles = [...new Set([...existingRolesArray, ...rolesArray])];
+                console.log('Adding new roles to existing user:', {
+                  existing: existingRolesArray,
+                  new: rolesArray,
+                  merged: mergedRoles,
+                  addedRoles: newRoles
+                });
+                
+                // Update user document with merged roles
+                try {
+                  await setDoc(doc(db, 'users', tempUser.uid), {
+                    uid: tempUser.uid,
+                    email: tempUser.email,
+                    displayName: displayName || existingData.displayName || '',
+                    phone: phone || existingData.phone || null,
+                    roles: mergedRoles,
+                    photoURL: existingData.photoURL || null,
+                    updatedAt: new Date().toISOString(),
+                  }, { merge: true });
+                  
+                  console.log('User roles updated successfully in Firestore');
+                } catch (updateError) {
+                  console.error('Error updating user roles in Firestore:', updateError);
+                  await firebaseSignOut(auth);
+                  return {
+                    user: null,
+                    error: 'Failed to update your roles. Please try again or contact support.',
+                    isNewUser: false
+                  };
+                }
+                
+                // Update profile if display name provided
+                if (displayName) {
+                  try {
+                    await updateProfile(tempUser, { displayName });
+                  } catch (profileError) {
+                    console.warn('Failed to update profile:', profileError.message);
+                  }
+                }
+                
+                // Log role addition
+                logUserActivity({
+                  userId: tempUser.uid,
+                  email: tempUser.email,
+                  activityType: 'role_change',
+                  metadata: {
+                    previousRoles: existingRolesArray,
+                    newRoles: mergedRoles,
+                    addedRoles: newRoles,
+                    method: 'signup',
+                  },
+                }).catch(err => {
+                  console.warn('Activity logging failed (non-critical):', err);
+                });
+                
+                return { user: tempUser, error: null, isNewUser: false };
+              } else {
+                // User exists in Auth but not in Firestore - recreate profile
+                console.log('User exists in Auth but not in Firestore, recreating document...');
+                await setDoc(doc(db, 'users', tempUser.uid), {
+                  uid: tempUser.uid,
+                  email: tempUser.email,
+                  displayName: displayName || '',
+                  phone: phone || null,
+                  roles: rolesArray,
+                  photoURL: null,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                });
+                
+                // Update profile
+                try {
+                  await updateProfile(tempUser, { displayName });
+                } catch (profileError) {
+                  console.warn('Failed to update profile:', profileError.message);
+                }
+                
+                // Log signup
+                logUserActivity({
+                  userId: tempUser.uid,
+                  email: tempUser.email,
+                  activityType: 'signup',
+                  metadata: {
+                    displayName,
+                    roles: rolesArray,
+                    method: 'email',
+                    note: 'Recreated profile for existing Auth user',
+                  },
+                }).catch(err => {
+                  console.warn('Activity logging failed (non-critical):', err);
+                });
+                
+                return { user: tempUser, error: null, isNewUser: true };
+              }
+            } catch (signInErr) {
+              // Wrong password or other sign in error
+              console.error('Sign in error during role check:', {
+                code: signInErr.code,
+                message: signInErr.message,
+                fullError: signInErr
               });
+              
+              if (signInErr.code === 'auth/wrong-password' || 
+                  signInErr.code === 'auth/invalid-credential' ||
+                  signInErr.code === 'auth/invalid-email' ||
+                  (signInErr.message && (
+                    signInErr.message.includes('password') || 
+                    signInErr.message.includes('credential') ||
+                    signInErr.message.includes('invalid')
+                  ))) {
+                // User exists but password is wrong - they need to sign in with correct password
+                // Don't sign out - they weren't signed in
+                return { 
+                  user: null, 
+                  error: 'An account with this email already exists. To add new roles, please use your existing password. If you forgot your password, use "Forgot Password" to reset it.', 
+                  isNewUser: false 
+                };
+              }
+              // Some other error - allow signup to proceed (might be a different account)
+              console.log('Sign in check failed with unexpected error, proceeding with new account creation:', signInErr.message);
             }
-          } catch (dbError) {
-            console.warn('Failed to update user document in Firestore:', dbError.message);
+          } else {
+            // No database - email exists, prevent signup
+            return { 
+              user: null, 
+              error: 'An account with this email already exists. Please sign in instead.', 
+              isNewUser: false 
+            };
           }
         }
-        
-        return { user, error: null, isNewUser: false };
-      } catch (signInError) {
-        // User doesn't exist, create new account
-        isNewUser = true;
-        userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      } catch (fetchError) {
+        // Error checking sign-in methods - proceed with account creation
+        console.log('Could not check if email exists, proceeding with signup:', fetchError.message);
       }
+      
+      // Email is not registered or check failed - create new account
+      console.log('Creating new account...');
+      isNewUser = true;
+      userCredential = await createUserWithEmailAndPassword(auth, email, password);
 
       const user = userCredential.user;
 
@@ -102,6 +253,7 @@ export const authService = {
       }
 
       // Create user document in Firestore (only if db is available)
+      // IMPORTANT: This must complete before returning to ensure RootNavigator can find the profile
       if (db) {
         try {
           await setDoc(doc(db, 'users', user.uid), {
@@ -113,9 +265,10 @@ export const authService = {
             photoURL: null,
             createdAt: new Date().toISOString(),
           });
+          console.log('User document created successfully in Firestore');
           
-          // Log new account creation
-          await logUserActivity({
+          // Log new account creation (non-blocking - don't await)
+          logUserActivity({
             userId: user.uid,
             email: user.email,
             activityType: 'signup',
@@ -124,13 +277,26 @@ export const authService = {
               roles: rolesArray,
               method: 'email',
             },
+          }).catch(err => {
+            console.warn('Activity logging failed (non-critical):', err);
           });
         } catch (dbError) {
-          console.warn('Failed to create user document in Firestore:', dbError.message);
-          // Continue even if Firestore fails - auth user is created
+          console.error('Failed to create user document in Firestore:', dbError.message);
+          // This is critical - if we can't create the document, the user will be signed out
+          // by RootNavigator. We should return an error.
+          return { 
+            user: null, 
+            error: 'Failed to create user profile. Please try again.', 
+            isNewUser: false 
+          };
         }
       } else {
         console.warn('Firestore not available - user document not created');
+        return { 
+          user: null, 
+          error: 'Database not available. Please try again.', 
+          isNewUser: false 
+        };
       }
 
       return { user, error: null, isNewUser };
@@ -171,8 +337,8 @@ export const authService = {
             lastLoginAtISO: new Date().toISOString(),
           }, { merge: true });
           
-          // Log successful login
-          await logUserActivity({
+          // Log successful login (non-blocking - don't await)
+          logUserActivity({
             userId: user.uid,
             email: user.email,
             activityType: 'login',
@@ -180,6 +346,8 @@ export const authService = {
               method: 'email',
               platform: Platform.OS,
             },
+          }).catch(err => {
+            console.warn('Activity logging failed (non-critical):', err);
           });
         } catch (dbError) {
           console.warn('Error checking user document:', dbError.message);
@@ -232,8 +400,8 @@ export const authService = {
               createdAt: new Date().toISOString(),
             });
             
-            // Log phone signup
-            await logUserActivity({
+            // Log phone signup (non-blocking)
+            logUserActivity({
               userId: user.uid,
               email: user.email || user.phoneNumber,
               activityType: 'signup',
@@ -241,6 +409,8 @@ export const authService = {
                 method: 'phone',
                 phone: user.phoneNumber,
               },
+            }).catch(err => {
+              console.warn('Activity logging failed (non-critical):', err);
             });
           } else {
             // Update last login and log phone login
@@ -249,7 +419,8 @@ export const authService = {
               lastLoginAtISO: new Date().toISOString(),
             }, { merge: true });
             
-            await logUserActivity({
+            // Log phone login (non-blocking)
+            logUserActivity({
               userId: user.uid,
               email: user.email || user.phoneNumber,
               activityType: 'login',
@@ -257,6 +428,8 @@ export const authService = {
                 method: 'phone',
                 platform: Platform.OS,
               },
+            }).catch(err => {
+              console.warn('Activity logging failed (non-critical):', err);
             });
           }
         } catch (dbError) {
@@ -276,15 +449,17 @@ export const authService = {
       const currentUser = auth.currentUser;
       await firebaseSignOut(auth);
       
-      // Log logout if user was logged in
+      // Log logout if user was logged in (non-blocking)
       if (currentUser && db) {
-        await logUserActivity({
+        logUserActivity({
           userId: currentUser.uid,
           email: currentUser.email,
           activityType: 'logout',
           metadata: {
             platform: Platform.OS,
           },
+        }).catch(err => {
+          console.warn('Activity logging failed (non-critical):', err);
         });
       }
       

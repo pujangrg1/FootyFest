@@ -10,6 +10,7 @@ import { getMatchesForTournament, createMatchesBatch, updateMatch, deleteMatch, 
 import { setTournaments } from '../../store/slices/tournamentsSlice';
 import WebDateTimePicker from '../../components/web/WebDateTimePicker';
 import MatchTimer from '../../components/MatchTimer';
+import { showAlert } from '../../utils/alert';
 
 export default function TournamentDetailsScreen() {
   const navigation = useNavigation();
@@ -83,13 +84,13 @@ export default function TournamentDetailsScreen() {
         title: 'Tournament Invitation',
       });
     } catch (error) {
-      Alert.alert('Error', 'Failed to share link');
+      showAlert('Error', 'Failed to share link');
     }
   };
 
   const copyToClipboard = () => {
     // In a real app, you'd use Clipboard API
-    Alert.alert('Link Copied', shareableLink);
+    showAlert('Link Copied', shareableLink);
   };
 
   if (!tournament) {
@@ -188,7 +189,7 @@ export default function TournamentDetailsScreen() {
                     window.alert('Error: ' + (error.message || 'Failed to archive tournament'));
                   }
                 } else {
-                  Alert.alert(
+                  showAlert(
                     'Archive Tournament',
                     message,
                     [
@@ -205,10 +206,10 @@ export default function TournamentDetailsScreen() {
                             // Remove archived tournament from Redux state instead of updating it
                             const filteredList = tournaments.filter(t => t.id !== tournamentId);
                             dispatch(setTournaments(filteredList));
-                            Alert.alert('Success', 'Tournament archived successfully');
+                            showAlert('Success', 'Tournament archived successfully');
                             navigation.goBack();
                           } catch (error) {
-                            Alert.alert('Error', error.message || 'Failed to archive tournament');
+                            showAlert('Error', error.message || 'Failed to archive tournament');
                           }
                         },
                       },
@@ -293,9 +294,9 @@ function SummaryTab({ tournament, isEditing, setIsEditing, editedTournament, set
                   });
                   onUpdate(updated);
                   setIsEditing(false);
-                  Alert.alert('Success', 'Tournament updated successfully');
+                  showAlert('Success', 'Tournament updated successfully');
                 } catch (error) {
-                  Alert.alert('Error', error.message || 'Failed to update tournament');
+                  showAlert('Error', error.message || 'Failed to update tournament');
                 }
               }}
             />
@@ -406,7 +407,8 @@ function TeamsTab({ tournament, shareableLink, onShare, onCopy, tournamentId, on
         onUpdate(updated);
       }
     } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to save teams');
+      console.error('Error saving teams:', error);
+      showAlert('Error', error.message || 'Failed to save teams');
     } finally {
       setSaving(false);
     }
@@ -645,23 +647,23 @@ function MatchesTab({ tournament, tournamentId }) {
   const saveGroups = async () => {
     try {
       await updateTournament(tournamentId, { groups });
-      Alert.alert('Success', 'Groups saved successfully');
+      showAlert('Success', 'Groups saved successfully');
     } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to save groups');
+      showAlert('Error', error.message || 'Failed to save groups');
     }
   };
 
   // Schedule generator logic
   const generateSchedule = async () => {
     if (totalTeams < 2) {
-      Alert.alert('Error', 'Need at least 2 teams to generate a schedule');
+      showAlert('Error', 'Need at least 2 teams to generate a schedule');
       return;
     }
 
     // Validate groups if needed
     if (needsGroups) {
       if (groups.length === 0) {
-        Alert.alert('Error', 'Please create at least one group before generating the schedule');
+        showAlert('Error', 'Please create at least one group before generating the schedule');
         return;
       }
       
@@ -673,7 +675,7 @@ function MatchesTab({ tournament, tournamentId }) {
       
       const unassignedTeams = allTeams.filter(team => !assignedTeamIds.has(team.id));
       if (unassignedTeams.length > 0) {
-        Alert.alert(
+        showAlert(
           'Error',
           `Please assign all teams to groups. Unassigned teams: ${unassignedTeams.map(t => t.name).join(', ')}`
         );
@@ -683,17 +685,19 @@ function MatchesTab({ tournament, tournamentId }) {
       // Check if each group has at least one team
       const emptyGroups = groups.filter(g => g.teams.length === 0);
       if (emptyGroups.length > 0) {
-        Alert.alert('Error', 'All groups must have at least one team assigned');
+        showAlert('Error', 'All groups must have at least one team assigned');
         return;
       }
     }
 
     // Confirm before generating (will replace existing matches)
-    Alert.alert(
+    const confirmMessage = matches.length > 0 
+      ? 'This will replace all existing matches. Continue?' 
+      : `Generate ${needsGroups ? 'group-based' : 'round-robin'} matches for ${totalTeams} teams?`;
+
+    showAlert(
       'Generate Schedule',
-      matches.length > 0 
-        ? 'This will replace all existing matches. Continue?' 
-        : `Generate ${needsGroups ? 'group-based' : 'round-robin'} matches for ${totalTeams} teams?`,
+      confirmMessage,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -701,6 +705,7 @@ function MatchesTab({ tournament, tournamentId }) {
           onPress: async () => {
             setLoading(true);
             try {
+              console.log('Starting match generation...');
               const generatedMatches = [];
 
               if (needsGroups && groups.length > 0) {
@@ -740,15 +745,19 @@ function MatchesTab({ tournament, tournamentId }) {
                 }
               }
 
+              console.log(`Generated ${generatedMatches.length} matches, saving to Firestore...`);
+
               // Save matches to Firestore (without dates - organizer sets them manually)
               const createdMatches = await createMatchesBatch(tournamentId, generatedMatches);
+              console.log(`Successfully created ${createdMatches.length} matches`);
               setMatches(createdMatches);
-              Alert.alert(
+              showAlert(
                 'Success', 
                 `Generated ${createdMatches.length} matches!\n\nTap each match to set its date and time.`
               );
             } catch (error) {
-              Alert.alert('Error', error.message || 'Failed to generate schedule');
+              console.error('Error generating matches:', error);
+              showAlert('Error', error.message || 'Failed to generate schedule');
             } finally {
               setLoading(false);
             }
@@ -759,7 +768,7 @@ function MatchesTab({ tournament, tournamentId }) {
   };
 
   const deleteMatchHandler = async (matchId) => {
-    Alert.alert(
+    showAlert(
       'Delete Match',
       'Are you sure you want to delete this match?',
       [
@@ -772,7 +781,8 @@ function MatchesTab({ tournament, tournamentId }) {
               await deleteMatch(matchId);
               setMatches(matches.filter(m => m.id !== matchId));
             } catch (error) {
-              Alert.alert('Error', error.message || 'Failed to delete match');
+              console.error('Error deleting match:', error);
+              showAlert('Error', error.message || 'Failed to delete match');
             }
           },
         },

@@ -119,22 +119,67 @@ export default function RootNavigator() {
     const handleAuthStateChange = async (user) => {
       clearTimeout(timeout);
       if (user) {
+        // Check if this is a newly created user (created within last 5 seconds)
+        // Give Firestore time to create the user document
+        const isNewUser = user.metadata?.creationTime && 
+          (Date.now() - new Date(user.metadata.creationTime).getTime()) < 5000;
+        
+        // If it's a new user, wait a bit for Firestore document to be created
+        if (isNewUser) {
+          console.log('New user detected, waiting for Firestore document...');
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+        }
+        
         // Fetch user profile to get roles
         try {
           const { profile, error: profileError } = await authService.getUserProfile(user.uid);
           
-          // If profile doesn't exist (user was deleted from Firestore), sign them out
+          // If profile doesn't exist and it's NOT a new user, sign them out
+          // For new users, give it another try after a short delay
           if (!profile || profileError === 'User not found') {
-            console.warn('User document not found in Firestore, signing out...');
-            try {
-              await authService.signOut();
-            } catch (signOutError) {
-              console.error('Error signing out deleted user:', signOutError);
+            if (isNewUser) {
+              // Try one more time after a delay for new users
+              console.log('Profile not found for new user, retrying...');
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              const retryResult = await authService.getUserProfile(user.uid);
+              if (!retryResult.profile || retryResult.error === 'User not found') {
+                console.warn('User document still not found after retry, signing out...');
+                try {
+                  await authService.signOut();
+                } catch (signOutError) {
+                  console.error('Error signing out deleted user:', signOutError);
+                }
+                dispatch(clearAuth());
+                setAuthenticated(false);
+                setInitializing(false);
+                return;
+              }
+              // Use retry result
+              const { profile: retryProfile } = retryResult;
+              dispatch(setUser({ 
+                uid: user.uid, 
+                email: user.email, 
+                phone: user.phoneNumber
+              }));
+              if (retryProfile) {
+                dispatch(setProfile(retryProfile));
+              }
+              setAuthenticated(true);
+              setInitializing(false);
+              return;
+            } else {
+              // For existing users, if profile doesn't exist, sign them out
+              console.warn('User document not found in Firestore, signing out...');
+              try {
+                await authService.signOut();
+              } catch (signOutError) {
+                console.error('Error signing out deleted user:', signOutError);
+              }
+              dispatch(clearAuth());
+              setAuthenticated(false);
+              setInitializing(false);
+              return;
             }
-            dispatch(clearAuth());
-            setAuthenticated(false);
-            setInitializing(false);
-            return;
           }
           
           dispatch(setUser({ 

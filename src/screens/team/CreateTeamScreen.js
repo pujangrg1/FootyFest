@@ -116,7 +116,7 @@ export default function CreateTeamScreen({ onTeamCreated }) {
         }
       })();
     } else {
-      Alert.alert(
+      showAlert(
         'Sign Out',
         'Are you sure you want to sign out?',
         [
@@ -128,13 +128,13 @@ export default function CreateTeamScreen({ onTeamCreated }) {
               try {
                 const result = await authService.signOut();
                 if (result.error) {
-                  Alert.alert('Error', result.error);
+                  showAlert('Error', result.error);
                   return;
                 }
                 dispatch(clearAuth());
               } catch (error) {
                 console.error('Sign out error:', error);
-                Alert.alert('Error', 'Failed to sign out: ' + error.message);
+                showAlert('Error', 'Failed to sign out: ' + error.message);
               }
             },
           },
@@ -294,11 +294,7 @@ export default function CreateTeamScreen({ onTeamCreated }) {
       
       // Show success message after a brief delay
       setTimeout(() => {
-        if (Platform.OS === 'web') {
-          window.alert('Team created successfully!');
-        } else {
-          Alert.alert('Success', 'Team created successfully!');
-        }
+        showAlert('Success', 'Team created successfully!');
       }, 100);
       
     } catch (error) {

@@ -5,7 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useDispatch, useSelector } from 'react-redux';
-import { getTournamentsForCurrentUser } from '../../services/tournaments';
+import { getTournamentsForCurrentUser, getArchivedTournaments } from '../../services/tournaments';
 import { setTournaments, setLoading, setError } from '../../store/slices/tournamentsSlice';
 import { clearAuth } from '../../store/slices/authSlice';
 import { authService } from '../../services/auth';
@@ -20,6 +20,9 @@ export default function TournamentListScreen() {
   const { items, loading } = useSelector((state) => state.tournaments);
   const [userRole, setUserRole] = useState(null);
   const [organizerNames, setOrganizerNames] = useState({});
+  const [showArchived, setShowArchived] = useState(false);
+  const [archivedTournaments, setArchivedTournaments] = useState([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
 
   // Fetch user role
   useEffect(() => {
@@ -30,7 +33,9 @@ export default function TournamentListScreen() {
           const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
           if (userDoc.exists()) {
             const userData = userDoc.data();
-            setUserRole(userData.role || 'spectator');
+            const userRoles = userData.roles || (userData.role ? [userData.role] : ['spectator']);
+            const isAdmin = userRoles.includes('admin');
+            setUserRole(isAdmin ? 'admin' : (userData.role || 'spectator'));
           } else {
             setUserRole('spectator');
           }
@@ -42,6 +47,62 @@ export default function TournamentListScreen() {
     };
     fetchUserRole();
   }, []);
+
+  // Fetch archived tournaments for admins
+  useEffect(() => {
+    const fetchArchived = async () => {
+      if (userRole === 'admin' && showArchived) {
+        setArchivedLoading(true);
+        try {
+          const archived = await getArchivedTournaments();
+          setArchivedTournaments(archived);
+          
+          // Fetch organizer names for archived tournaments
+          if (db) {
+            const namesToFetch = {};
+            archived.forEach((tournament) => {
+              if (!tournament.organizerName && tournament.organizerId) {
+                namesToFetch[tournament.organizerId] = tournament.id;
+              }
+            });
+            
+            const namePromises = Object.entries(namesToFetch).map(async ([organizerId, tournamentId]) => {
+              try {
+                const userDoc = await getDoc(doc(db, 'users', organizerId));
+                if (userDoc.exists()) {
+                  const userData = userDoc.data();
+                  return {
+                    tournamentId,
+                    organizerName: userData.displayName || userData.email || 'Unknown Organizer',
+                  };
+                }
+              } catch (error) {
+                console.warn(`Failed to fetch organizer for tournament ${tournamentId}:`, error.message);
+              }
+              return null;
+            });
+            
+            const fetchedNames = await Promise.all(namePromises);
+            const namesMap = {};
+            fetchedNames.forEach((result) => {
+              if (result) {
+                namesMap[result.tournamentId] = result.organizerName;
+              }
+            });
+            
+            if (Object.keys(namesMap).length > 0) {
+              setOrganizerNames(prev => ({ ...prev, ...namesMap }));
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching archived tournaments:', error);
+        } finally {
+          setArchivedLoading(false);
+        }
+      }
+    };
+    fetchArchived();
+  }, [userRole, showArchived]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -200,17 +261,35 @@ export default function TournamentListScreen() {
             )}
           </View>
         </View>
-        {items.length === 0 && !loading ? (
+        {/* Archive Toggle for Admins */}
+        {userRole === 'admin' && (
+          <View style={styles.archiveToggleContainer}>
+            <Button
+              mode={showArchived ? 'contained' : 'outlined'}
+              onPress={() => setShowArchived(!showArchived)}
+              icon="archive"
+              textColor={showArchived ? '#fff' : '#ffa500'}
+              buttonColor={showArchived ? '#ffa500' : 'transparent'}
+              style={styles.archiveToggleButton}
+            >
+              {showArchived ? 'View Active Tournaments' : 'View Archived Tournaments'}
+            </Button>
+          </View>
+        )}
+
+        {(showArchived ? archivedTournaments : items).length === 0 && !loading && !archivedLoading ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>
-              {userRole === 'admin' 
-                ? 'No tournaments found in the system.' 
-                : 'No tournaments yet. Create your first tournament!'}
+              {showArchived
+                ? 'No archived tournaments found.'
+                : userRole === 'admin' 
+                  ? 'No tournaments found in the system.' 
+                  : 'No tournaments yet. Create your first tournament!'}
             </Text>
           </View>
         ) : (
           <FlatList
-            data={items}
+            data={showArchived ? archivedTournaments : items}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.listContent}
             renderItem={({ item }) => (
@@ -221,7 +300,18 @@ export default function TournamentListScreen() {
                 <Card style={styles.card}>
                   <Card.Content style={styles.cardContent}>
                     <View style={styles.cardHeader}>
-                      <Text style={styles.cardTitle}>{item.name || 'Untitled Tournament'}</Text>
+                      <View style={styles.cardTitleRow}>
+                        <Text style={styles.cardTitle}>{item.name || 'Untitled Tournament'}</Text>
+                        {item.archived && (
+                          <Chip 
+                            icon="archive" 
+                            style={styles.archivedChip}
+                            textStyle={styles.archivedChipText}
+                          >
+                            Archived
+                          </Chip>
+                        )}
+                      </View>
                       {userRole === 'admin' && (item.organizerName || organizerNames[item.id]) && (
                         <Chip 
                           icon="account" 
@@ -344,6 +434,28 @@ const styles = StyleSheet.create({
   adminChipText: {
     color: '#fff',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  archiveToggleContainer: {
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  archiveToggleButton: {
+    borderColor: '#ffa500',
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  archivedChip: {
+    backgroundColor: '#ffa500',
+    height: 24,
+  },
+  archivedChipText: {
+    color: '#fff',
+    fontSize: 10,
     fontWeight: '600',
   },
   signOutButton: {

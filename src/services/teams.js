@@ -29,13 +29,16 @@ const convertTeamData = (data) => {
   if (converted.updatedAt) {
     converted.updatedAt = convertTimestamp(converted.updatedAt);
   }
+  if (converted.deletedAt) {
+    converted.deletedAt = convertTimestamp(converted.deletedAt);
+  }
   if (!converted.players || !Array.isArray(converted.players)) {
     converted.players = [];
   }
   return converted;
 };
 
-// Check if team name already exists in the database
+// Check if team name already exists in the database (excludes deleted teams)
 export async function checkTeamNameExists(teamName) {
   if (!teamName) return false;
   
@@ -45,7 +48,10 @@ export async function checkTeamNameExists(teamName) {
   
   return snapshot.docs.some(doc => {
     const data = doc.data();
-    return data.name && data.name.trim().toLowerCase() === normalizedName;
+    // Exclude deleted teams from name check
+    return data.name && 
+           data.name.trim().toLowerCase() === normalizedName &&
+           !data.deleted;
   });
 }
 
@@ -100,10 +106,12 @@ export async function getTeamsForCurrentUser() {
     where('managerId', '==', currentUser.uid)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs.map((doc) => {
-    const data = doc.data();
-    return { id: doc.id, ...convertTeamData(data) };
-  });
+  return snapshot.docs
+    .map((doc) => {
+      const data = doc.data();
+      return { id: doc.id, ...convertTeamData(data) };
+    })
+    .filter(t => !t.deleted); // Filter out deleted teams
 }
 
 export async function getTeamById(teamId) {
@@ -130,7 +138,12 @@ export async function getTeamByName(teamName) {
     return null;
   }
   
-  const teamDoc = snapshot.docs[0];
+  // Find first non-deleted team with this name
+  const teamDoc = snapshot.docs.find(doc => !doc.data().deleted);
+  if (!teamDoc) {
+    return null;
+  }
+  
   return { id: teamDoc.id, ...convertTeamData(teamDoc.data()) };
 }
 
@@ -152,12 +165,17 @@ export async function updateTeam(teamId, updates) {
     throw new Error('You can only update your own teams');
   }
 
-  // If updating name, check for duplicates (excluding current team)
+  // If updating name, check for duplicates (excluding current team and deleted teams)
   if (updates.name && updates.name.trim().toLowerCase() !== teamData.name.trim().toLowerCase()) {
     const nameExists = await checkTeamNameExists(updates.name);
     if (nameExists) {
       throw new Error('A team with this name already exists. Please choose a different name.');
     }
+  }
+  
+  // Don't allow updating deleted teams
+  if (teamData.deleted) {
+    throw new Error('Cannot update a deleted team');
   }
 
   await updateDoc(teamRef, {
@@ -191,8 +209,48 @@ export async function deleteTeam(teamId) {
     throw new Error('You can only delete your own teams');
   }
 
-  await deleteDoc(teamRef);
+  // Soft delete - mark as deleted instead of actually deleting
+  await updateDoc(teamRef, {
+    deleted: true,
+    deletedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
   return true;
+}
+
+// Get deleted teams (for admins only)
+export async function getDeletedTeams() {
+  const currentUser = authService.getCurrentUser();
+  if (!currentUser) {
+    return [];
+  }
+
+  // Check if user is admin
+  try {
+    const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      const userRoles = userData.roles || (userData.role ? [userData.role] : []);
+      const isAdmin = userRoles.includes('admin');
+
+      if (!isAdmin) {
+        throw new Error('Only admins can view deleted teams');
+      }
+
+      const snapshot = await getDocs(collection(db, TEAMS_COLLECTION));
+      return snapshot.docs
+        .map((doc) => {
+          const data = doc.data();
+          return { id: doc.id, ...convertTeamData(data) };
+        })
+        .filter(t => t.deleted === true); // Only deleted teams
+    }
+  } catch (error) {
+    throw new Error('You must be an admin to view deleted teams');
+  }
+
+  return [];
 }
 
 // Get all tournaments that this team is participating in
@@ -224,13 +282,15 @@ export async function getTeamTournaments(teamName) {
   return participatingTournaments;
 }
 
-// Get all teams (for spectators)
+// Get all teams (for spectators) - excludes deleted teams
 export async function getAllTeams() {
   const snapshot = await getDocs(collection(db, TEAMS_COLLECTION));
-  return snapshot.docs.map((doc) => {
-    const data = doc.data();
-    return { id: doc.id, ...convertTeamData(data) };
-  });
+  return snapshot.docs
+    .map((doc) => {
+      const data = doc.data();
+      return { id: doc.id, ...convertTeamData(data) };
+    })
+    .filter(t => !t.deleted); // Filter out deleted teams
 }
 
 // Get all matches for a team

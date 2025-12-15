@@ -5,7 +5,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useSelector, useDispatch } from 'react-redux';
-import { updateTournament, getTournamentById, deleteTournament, updateTournamentTeams } from '../../services/tournaments';
+import { updateTournament, getTournamentById, deleteTournament, updateTournamentTeams, archiveTournament } from '../../services/tournaments';
 import { getMatchesForTournament, createMatchesBatch, updateMatch, deleteMatch, subscribeToMatchesForTournament } from '../../services/matches';
 import { setTournaments } from '../../store/slices/tournamentsSlice';
 import WebDateTimePicker from '../../components/web/WebDateTimePicker';
@@ -168,27 +168,29 @@ export default function TournamentDetailsScreen() {
                 const updatedList = tournaments.map(t => t.id === updated.id ? updated : t);
                 dispatch(setTournaments(updatedList));
               }}
-              onDelete={async () => {
+              onArchive={async () => {
                 Alert.alert(
-                  'Delete Tournament',
-                  'Are you sure you want to delete this tournament? This action cannot be undone.',
+                  'Archive Tournament',
+                  'Are you sure you want to archive this tournament? Archived tournaments are hidden from normal views but can be viewed by admins for analysis. You can still access it later if needed.',
                   [
                     {
-                      text: 'No',
+                      text: 'Cancel',
                       style: 'cancel',
                     },
                     {
-                      text: 'Yes',
+                      text: 'Archive',
                       style: 'destructive',
                       onPress: async () => {
                         try {
-                          await deleteTournament(tournamentId);
-                          const updatedList = tournaments.filter(t => t.id !== tournamentId);
+                          await archiveTournament(tournamentId);
+                          const updated = await getTournamentById(tournamentId);
+                          setTournament(updated);
+                          const updatedList = tournaments.map(t => t.id === tournamentId ? updated : t);
                           dispatch(setTournaments(updatedList));
+                          Alert.alert('Success', 'Tournament archived successfully');
                           navigation.goBack();
-                          Alert.alert('Success', 'Tournament deleted successfully');
                         } catch (error) {
-                          Alert.alert('Error', error.message || 'Failed to delete tournament');
+                          Alert.alert('Error', error.message || 'Failed to archive tournament');
                         }
                       },
                     },
@@ -228,7 +230,7 @@ export default function TournamentDetailsScreen() {
 }
 
 // Summary Tab Component
-function SummaryTab({ tournament, isEditing, setIsEditing, editedTournament, setEditedTournament, tournamentId, onUpdate, onDelete }) {
+function SummaryTab({ tournament, isEditing, setIsEditing, editedTournament, setEditedTournament, tournamentId, onUpdate, onArchive }) {
   return (
     <View style={styles.tabContent}>
       <View style={styles.summaryHeader}>
@@ -319,19 +321,38 @@ function SummaryTab({ tournament, isEditing, setIsEditing, editedTournament, set
         </Card.Content>
       </Card>
 
-      {/* Delete Button at the end */}
-      {!isEditing && (
+      {/* Archive Button at the end - only show if tournament is not already archived */}
+      {!isEditing && !tournament.archived && (
         <Card style={styles.deleteCard}>
           <Card.Content>
+            <Text style={styles.archiveInfo}>
+              Once your tournament is completed, you can archive it to hide it from normal views. 
+              Archived tournaments are preserved for admin analysis.
+            </Text>
             <Button
               mode="outlined"
-              onPress={onDelete}
-              icon="delete"
-              textColor="#ff4444"
-              style={styles.deleteButtonFull}
+              onPress={onArchive}
+              icon="archive"
+              textColor="#ffa500"
+              style={styles.archiveButtonFull}
             >
-              Delete Tournament
+              Archive Tournament
             </Button>
+          </Card.Content>
+        </Card>
+      )}
+      
+      {/* Show archived badge if tournament is archived */}
+      {tournament.archived && (
+        <Card style={styles.archivedCard}>
+          <Card.Content>
+            <View style={styles.archivedBadge}>
+              <Ionicons name="archive" size={20} color="#ffa500" />
+              <Text style={styles.archivedText}>This tournament is archived</Text>
+            </View>
+            <Text style={styles.archivedInfo}>
+              Archived tournaments are hidden from normal views but can be viewed by admins for analysis.
+            </Text>
           </Card.Content>
         </Card>
       )}
@@ -1666,12 +1687,43 @@ const styles = StyleSheet.create({
     marginTop: 16,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#ff4444',
+    borderColor: '#ffa500',
   },
-  deleteButtonFull: {
-    borderColor: '#ff4444',
+  archiveButtonFull: {
+    borderColor: '#ffa500',
     borderRadius: 8,
     width: '100%',
+    marginTop: 12,
+  },
+  archiveInfo: {
+    color: '#aaa',
+    fontSize: 12,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  archivedCard: {
+    backgroundColor: '#1a1a2e',
+    marginTop: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#ffa500',
+  },
+  archivedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  archivedText: {
+    color: '#ffa500',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  archivedInfo: {
+    color: '#aaa',
+    fontSize: 12,
+    textAlign: 'center',
   },
   sectionTitle: {
     color: '#fff',

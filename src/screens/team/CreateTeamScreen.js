@@ -7,6 +7,10 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../../../firebase/config';
 import { createTeam } from '../../services/teams';
 import { showAlert } from '../../utils/alert';
+import { useDispatch } from 'react-redux';
+import { clearAuth } from '../../store/slices/authSlice';
+import { authService } from '../../services/auth';
+import RoleSwitcher from '../../components/RoleSwitcher';
 
 const POSITIONS = [
   'Goalkeeper',
@@ -68,6 +72,7 @@ const uploadImage = async (uri, path) => {
 };
 
 export default function CreateTeamScreen({ onTeamCreated }) {
+  const dispatch = useDispatch();
   const [teamName, setTeamName] = useState('');
   const [yearEstablished, setYearEstablished] = useState('');
   const [description, setDescription] = useState('');
@@ -82,6 +87,61 @@ export default function CreateTeamScreen({ onTeamCreated }) {
   const [teamLogo, setTeamLogo] = useState(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [uploadingPlayerPhoto, setUploadingPlayerPhoto] = useState(false);
+
+  const handleSignOut = () => {
+    console.log('Sign out button clicked (Create Team page)');
+    
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('Are you sure you want to sign out?');
+      if (!confirmed) {
+        return;
+      }
+      
+      (async () => {
+        try {
+          console.log('Starting sign out...');
+          const result = await authService.signOut();
+          console.log('Sign out result:', result);
+          
+          if (result.error) {
+            window.alert('Error: ' + result.error);
+            return;
+          }
+          
+          dispatch(clearAuth());
+          console.log('Redux state cleared');
+        } catch (error) {
+          console.error('Sign out error:', error);
+          window.alert('Failed to sign out: ' + error.message);
+        }
+      })();
+    } else {
+      Alert.alert(
+        'Sign Out',
+        'Are you sure you want to sign out?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Sign Out',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const result = await authService.signOut();
+                if (result.error) {
+                  Alert.alert('Error', result.error);
+                  return;
+                }
+                dispatch(clearAuth());
+              } catch (error) {
+                console.error('Sign out error:', error);
+                Alert.alert('Error', 'Failed to sign out: ' + error.message);
+              }
+            },
+          },
+        ]
+      );
+    }
+  };
 
   // Pick team logo from gallery
   const pickTeamLogo = async () => {
@@ -257,14 +317,38 @@ export default function CreateTeamScreen({ onTeamCreated }) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
       >
+        {/* Header with Role Switcher and Sign Out */}
+        <View style={styles.header}>
+          <Text variant="headlineSmall" style={styles.headerTitle}>
+            Create Your Team
+          </Text>
+          <View style={styles.headerActions}>
+            <RoleSwitcher />
+            {Platform.OS === 'web' ? (
+              <Button
+                mode="outlined"
+                onPress={handleSignOut}
+                icon="logout"
+                textColor="#ff4444"
+                buttonColor="rgba(255, 68, 68, 0.1)"
+                style={styles.signOutButtonWeb}
+                compact
+              >
+                Sign Out
+              </Button>
+            ) : (
+              <TouchableOpacity onPress={handleSignOut} style={styles.signOutButton}>
+                <Ionicons name="log-out-outline" size={24} color="#ff4444" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
         <ScrollView 
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          <Text variant="headlineMedium" style={styles.title}>
-            Create Your Team
-          </Text>
           <Text style={styles.subtitle}>
             Set up your team profile and add your squad members
           </Text>
@@ -504,6 +588,30 @@ const styles = StyleSheet.create({
   },
   keyboardView: {
     flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    paddingBottom: 8,
+    backgroundColor: '#0f0f1e',
+  },
+  headerTitle: {
+    color: '#fff',
+    fontWeight: 'bold',
+    flex: 1,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  signOutButton: {
+    padding: 8,
+  },
+  signOutButtonWeb: {
+    borderColor: '#ff4444',
   },
   scrollView: {
     flex: 1,

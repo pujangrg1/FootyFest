@@ -36,6 +36,9 @@ const convertTournamentData = (data) => {
   if (converted.updatedAt) {
     converted.updatedAt = convertTimestamp(converted.updatedAt);
   }
+  if (converted.archivedAt) {
+    converted.archivedAt = convertTimestamp(converted.archivedAt);
+  }
   if (converted.startDate) {
     converted.startDate = convertTimestamp(converted.startDate);
   }
@@ -129,38 +132,108 @@ export async function getTournamentsForCurrentUser() {
     const userRoles = userData.roles || (userData.role ? [userData.role] : ['spectator']);
     const isAdmin = userRoles.includes('admin');
 
-    // If user is admin, return all tournaments
+    // If user is admin, return all non-archived tournaments
     if (isAdmin) {
       const snapshot = await getDocs(collection(db, TOURNAMENTS_COLLECTION));
-      return snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return { id: doc.id, ...convertTournamentData(data) };
-      });
+      return snapshot.docs
+        .map((doc) => {
+          const data = doc.data();
+          return { id: doc.id, ...convertTournamentData(data) };
+        })
+        .filter(t => !t.archived); // Filter out archived tournaments
     }
   } catch (error) {
     // If we can't check the role, fall back to regular user behavior
     console.warn('Could not check user role:', error.message);
   }
 
-  // Otherwise, return only tournaments created by the user
+  // Otherwise, return only non-archived tournaments created by the user
   const q = query(
     collection(db, TOURNAMENTS_COLLECTION),
     where('organizerId', '==', currentUser.uid),
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs.map((doc) => {
-    const data = doc.data();
-    return { id: doc.id, ...convertTournamentData(data) };
-  });
+  return snapshot.docs
+    .map((doc) => {
+      const data = doc.data();
+      return { id: doc.id, ...convertTournamentData(data) };
+    })
+    .filter(t => !t.archived); // Filter out archived tournaments
 }
 
-// Get all tournaments (for spectators)
+// Get all tournaments (for spectators) - excludes archived
 export async function getAllTournaments() {
   const snapshot = await getDocs(collection(db, TOURNAMENTS_COLLECTION));
-  return snapshot.docs.map((doc) => {
-    const data = doc.data();
-    return { id: doc.id, ...convertTournamentData(data) };
+  return snapshot.docs
+    .map((doc) => {
+      const data = doc.data();
+      return { id: doc.id, ...convertTournamentData(data) };
+    })
+    .filter(t => !t.archived); // Filter out archived tournaments
+}
+
+// Archive a tournament (soft delete - keeps data for admin analysis)
+export async function archiveTournament(tournamentId) {
+  const currentUser = authService.getCurrentUser();
+  if (!currentUser) {
+    throw new Error('You must be logged in to archive a tournament');
+  }
+
+  const tournamentRef = doc(db, TOURNAMENTS_COLLECTION, tournamentId);
+  const tournamentDoc = await getDoc(tournamentRef);
+  
+  if (!tournamentDoc.exists()) {
+    throw new Error('Tournament not found');
+  }
+
+  const tournamentData = tournamentDoc.data();
+  // Only organizer can archive their own tournament
+  if (tournamentData.organizerId !== currentUser.uid) {
+    throw new Error('You can only archive your own tournaments');
+  }
+
+  await updateDoc(tournamentRef, {
+    archived: true,
+    archivedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   });
+
+  const updatedDoc = await getDoc(tournamentRef);
+  return { id: updatedDoc.id, ...convertTournamentData(updatedDoc.data()) };
+}
+
+// Get archived tournaments (for admins only)
+export async function getArchivedTournaments() {
+  const currentUser = authService.getCurrentUser();
+  if (!currentUser) {
+    return [];
+  }
+
+  // Check if user is admin
+  try {
+    const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      const userRoles = userData.roles || (userData.role ? [userData.role] : []);
+      const isAdmin = userRoles.includes('admin');
+
+      if (!isAdmin) {
+        throw new Error('Only admins can view archived tournaments');
+      }
+
+      const snapshot = await getDocs(collection(db, TOURNAMENTS_COLLECTION));
+      return snapshot.docs
+        .map((doc) => {
+          const data = doc.data();
+          return { id: doc.id, ...convertTournamentData(data) };
+        })
+        .filter(t => t.archived === true); // Only archived tournaments
+    }
+  } catch (error) {
+    throw new Error('You must be an admin to view archived tournaments');
+  }
+
+  return [];
 }
 
 export async function updateTournament(tournamentId, updates) {

@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { useFocusEffect } from '@react-navigation/native';
 import { useDispatch } from 'react-redux';
-import { getTeamsForCurrentUser, updateTeamPlayers, getTeamTournaments, getTeamMatches } from '../../services/teams';
+import { getTeamsForCurrentUser, updateTeamPlayers, getTeamTournaments, getTeamMatches, deleteTeam } from '../../services/teams';
 import { getMatchesForTournament, subscribeToMatchesForTournament } from '../../services/matches';
 import { getTournamentById } from '../../services/tournaments';
 import { authService } from '../../services/auth';
@@ -13,6 +13,7 @@ import { clearAuth } from '../../store/slices/authSlice';
 import MatchTimer from '../../components/MatchTimer';
 import CreateTeamScreen from './CreateTeamScreen';
 import RoleSwitcher from '../../components/RoleSwitcher';
+import { showAlert } from '../../utils/alert';
 
 export default function TeamHomeScreen() {
   const dispatch = useDispatch();
@@ -41,6 +42,11 @@ export default function TeamHomeScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleTeamDeleted = () => {
+    // Reload teams after deletion
+    loadTeam();
   };
 
   const handleTeamCreated = (newTeam) => {
@@ -218,7 +224,7 @@ export default function TeamHomeScreen() {
         {/* Tab Content */}
         <View style={styles.content}>
           {activeTab === 0 && (
-            <SquadTab team={team} onTeamUpdate={setTeam} />
+            <SquadTab team={team} onTeamUpdate={setTeam} onTeamDeleted={handleTeamDeleted} />
           )}
           {activeTab === 1 && (
             <MatchesTab teamName={team?.name} />
@@ -236,7 +242,55 @@ export default function TeamHomeScreen() {
 }
 
 // Squad Tab Component
-function SquadTab({ team, onTeamUpdate }) {
+function SquadTab({ team, onTeamUpdate, onTeamDeleted }) {
+  const handleDeleteTeam = async () => {
+    const message = 'Are you sure you want to delete this team? This action will mark the team as deleted. Deleted teams are hidden from normal views but can be viewed by admins for analysis.';
+    
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm(`Delete Team\n\n${message}`);
+      if (!confirmed) {
+        return;
+      }
+      
+      try {
+        await deleteTeam(team.id);
+        window.alert('Team deleted successfully');
+        // Notify parent to reload teams
+        if (onTeamDeleted) {
+          onTeamDeleted();
+        }
+      } catch (error) {
+        window.alert('Error: ' + (error.message || 'Failed to delete team'));
+      }
+    } else {
+      Alert.alert(
+        'Delete Team',
+        message,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await deleteTeam(team.id);
+                Alert.alert('Success', 'Team deleted successfully');
+                // Notify parent to reload teams
+                if (onTeamDeleted) {
+                  onTeamDeleted();
+                }
+              } catch (error) {
+                Alert.alert('Error', error.message || 'Failed to delete team');
+              }
+            },
+          },
+        ]
+      );
+    }
+  };
   const [players, setPlayers] = useState([]);
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState('');
@@ -478,6 +532,24 @@ function SquadTab({ team, onTeamUpdate }) {
           {renderPositionGroup('Forwards', forwards, '#96CEB4')}
         </View>
       )}
+
+      {/* Delete Team Button */}
+      <Card style={styles.deleteTeamCard}>
+        <Card.Content>
+          <Text style={styles.deleteTeamInfo}>
+            If you no longer need this team, you can delete it. Deleted teams are hidden from normal views but can be viewed by admins for analysis.
+          </Text>
+          <Button
+            mode="outlined"
+            onPress={handleDeleteTeam}
+            icon="delete"
+            textColor="#ff4444"
+            style={styles.deleteTeamButton}
+          >
+            Delete Team
+          </Button>
+        </Card.Content>
+      </Card>
     </ScrollView>
   );
 }
@@ -2698,6 +2770,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
+  },
+  deleteTeamCard: {
+    backgroundColor: '#1a1a2e',
+    marginTop: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#ff4444',
+  },
+  deleteTeamInfo: {
+    color: '#aaa',
+    fontSize: 12,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  deleteTeamButton: {
+    borderColor: '#ff4444',
+    borderRadius: 8,
+    width: '100%',
   },
   recommendationName: {
     color: '#fff',

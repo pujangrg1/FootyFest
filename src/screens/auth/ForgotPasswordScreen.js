@@ -6,7 +6,8 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { authService } from '../../services/auth';
 import { fetchSignInMethodsForEmail } from 'firebase/auth';
-import { auth } from '../../../firebase/config';
+import { auth, db } from '../../../firebase/config';
+import { collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { showAlert } from '../../utils/alert';
 
 export default function ForgotPasswordScreen() {
@@ -20,26 +21,57 @@ export default function ForgotPasswordScreen() {
   const checkEmailExists = async () => {
     if (!email.trim()) {
       setError('Please enter your email address');
-      return;
+      return false;
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      setError('Please enter a valid email address');
+      return false;
     }
 
     setCheckingEmail(true);
     setError('');
     
     try {
-      const signInMethods = await fetchSignInMethodsForEmail(auth, email.trim());
-      if (signInMethods && signInMethods.length > 0) {
+      // Check if auth is properly initialized
+      if (!auth || !auth.app) {
+        console.error('Firebase Auth not initialized');
+        setError('Authentication service is not available. Please try again later.');
+        return false;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      console.log('Checking email existence for:', normalizedEmail);
+      
+      const signInMethods = await fetchSignInMethodsForEmail(auth, normalizedEmail);
+      console.log('Sign-in methods returned:', signInMethods);
+      
+      if (signInMethods && Array.isArray(signInMethods) && signInMethods.length > 0) {
         // Email exists
+        console.log('Account found with sign-in methods:', signInMethods);
         setError('');
         return true;
       } else {
         // Email doesn't exist
+        console.log('No account found for email:', normalizedEmail);
         setError('No account found with this email address. Please check your email or create a new account.');
         return false;
       }
     } catch (error) {
       console.error('Error checking email:', error);
-      setError('Unable to verify email. Please try again.');
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      
+      // Handle specific Firebase errors
+      if (error.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address');
+      } else if (error.code === 'auth/too-many-requests') {
+        setError('Too many requests. Please try again later.');
+      } else {
+        setError(`Unable to verify email: ${error.message || 'Please try again.'}`);
+      }
       return false;
     } finally {
       setCheckingEmail(false);
@@ -66,18 +98,74 @@ export default function ForgotPasswordScreen() {
     }
 
     try {
-      // First check if email exists (without setting checkingEmail state)
-      let emailExists = false;
-      try {
-        const signInMethods = await fetchSignInMethodsForEmail(auth, email.trim());
-        emailExists = signInMethods && signInMethods.length > 0;
-      } catch (checkError) {
-        console.error('Error checking email:', checkError);
-        setError('Unable to verify email. Please try again.');
+      // Check if auth is properly initialized
+      if (!auth || !auth.app) {
+        console.error('Firebase Auth not initialized');
+        setError('Authentication service is not available. Please try again later.');
         setLoading(false);
         return;
       }
 
+      // Check if email exists (check both Auth and Firestore)
+      const normalizedEmail = email.trim().toLowerCase();
+      console.log('Checking email existence for password reset:', normalizedEmail);
+      
+      let emailExists = false;
+      
+      // First, try Firebase Auth check
+      try {
+        const signInMethods = await fetchSignInMethodsForEmail(auth, normalizedEmail);
+        console.log('Sign-in methods returned for password reset:', signInMethods);
+        
+        if (signInMethods && Array.isArray(signInMethods) && signInMethods.length > 0) {
+          emailExists = true;
+          console.log('Email exists in Firebase Auth');
+        } else {
+          console.log('Firebase Auth returned empty array, checking Firestore...');
+        }
+      } catch (checkError) {
+        console.warn('Firebase Auth check failed, trying Firestore:', checkError);
+        console.warn('Auth error code:', checkError.code);
+      }
+      
+      // Always check Firestore as fallback (especially if Auth returned empty array)
+      if (!emailExists && db) {
+        try {
+          console.log('Checking Firestore for email:', normalizedEmail);
+          const usersRef = collection(db, 'users');
+          
+          // Try exact match first
+          let q = query(
+            usersRef,
+            where('email', '==', normalizedEmail),
+            limit(1)
+          );
+          let querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            console.log('Email found in Firestore (exact match)');
+            emailExists = true;
+          } else {
+            // Try case-insensitive search
+            console.log('Trying case-insensitive search in Firestore...');
+            const allUsersSnapshot = await getDocs(usersRef);
+            const matchingUser = allUsersSnapshot.docs.find(doc => {
+              const userEmail = doc.data().email;
+              return userEmail && userEmail.toLowerCase() === normalizedEmail;
+            });
+            
+            if (matchingUser) {
+              console.log('Email found in Firestore (case-insensitive match)');
+              emailExists = true;
+            }
+          }
+        } catch (firestoreError) {
+          console.error('Firestore check failed:', firestoreError);
+        }
+      }
+      
+      console.log('Final email exists result:', emailExists);
+      
       if (!emailExists) {
         setError('No account found with this email address. Please check your email or create a new account.');
         setLoading(false);
@@ -85,20 +173,27 @@ export default function ForgotPasswordScreen() {
       }
 
       // Send password reset email
-      const result = await authService.resetPassword(email.trim());
+      console.log('Attempting to send password reset email to:', normalizedEmail);
+      const result = await authService.resetPassword(normalizedEmail);
+      console.log('Password reset result:', result);
       
       if (result.error) {
+        console.error('Password reset error:', result.error);
         setError(result.error);
         setLoading(false);
+        
+        // Show error alert
+        showAlert('Error', result.error);
       } else {
+        console.log('Password reset email sent successfully');
         setSuccess(true);
         setError('');
         setLoading(false);
         
-        // Show success message
+        // Show success message with more details
         showAlert(
           'Password Reset Email Sent',
-          `We've sent a password reset link to ${email.trim()}. Please check your email and follow the instructions to reset your password.`,
+          `We've sent a password reset link to ${normalizedEmail}.\n\nPlease check your inbox (and spam folder) and follow the instructions to reset your password.\n\nThe link will expire in 1 hour.`,
           [
             {
               text: 'OK',
@@ -122,25 +217,118 @@ export default function ForgotPasswordScreen() {
       return;
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
     setCheckingEmail(true);
     setError('');
     setSuccess(false);
 
     try {
-      const signInMethods = await fetchSignInMethodsForEmail(auth, email.trim());
-      if (signInMethods && signInMethods.length > 0) {
+      // Check if auth is properly initialized
+      if (!auth || !auth.app) {
+        console.error('Firebase Auth not initialized');
+        showAlert('Error', 'Authentication service is not available. Please try again later.');
+        setCheckingEmail(false);
+        return;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      console.log('Checking email existence for:', normalizedEmail);
+      console.log('Original email input:', email);
+      
+      let accountFound = false;
+      let signInMethods = null;
+      let firestoreCheckResult = false;
+      
+      // First, try Firebase Auth check
+      try {
+        signInMethods = await fetchSignInMethodsForEmail(auth, normalizedEmail);
+        console.log('Sign-in methods returned:', signInMethods);
+        console.log('Sign-in methods type:', typeof signInMethods);
+        console.log('Sign-in methods is array:', Array.isArray(signInMethods));
+        console.log('Sign-in methods length:', signInMethods?.length);
+        
+        if (signInMethods && Array.isArray(signInMethods) && signInMethods.length > 0) {
+          accountFound = true;
+          console.log('Account found via Firebase Auth');
+        } else {
+          console.log('Firebase Auth returned empty array or null, trying Firestore fallback...');
+        }
+      } catch (authError) {
+        console.warn('Firebase Auth check failed with error, trying Firestore fallback:', authError);
+        console.warn('Auth error code:', authError.code);
+        console.warn('Auth error message:', authError.message);
+      }
+      
+      // Always check Firestore as fallback (especially if Auth returned empty array)
+      if (!accountFound && db) {
+        try {
+          console.log('Checking Firestore for email:', normalizedEmail);
+          const usersRef = collection(db, 'users');
+          
+          // Try exact match first
+          let q = query(
+            usersRef,
+            where('email', '==', normalizedEmail),
+            limit(1)
+          );
+          let querySnapshot = await getDocs(q);
+          
+          if (!querySnapshot.empty) {
+            console.log('Account found in Firestore (exact match)');
+            const userData = querySnapshot.docs[0].data();
+            console.log('User data:', { email: userData.email, uid: userData.uid });
+            accountFound = true;
+            firestoreCheckResult = true;
+          } else {
+            // Try case-insensitive search by fetching all and filtering
+            console.log('Exact match not found, trying case-insensitive search...');
+            const allUsersSnapshot = await getDocs(usersRef);
+            const matchingUser = allUsersSnapshot.docs.find(doc => {
+              const userEmail = doc.data().email;
+              return userEmail && userEmail.toLowerCase() === normalizedEmail;
+            });
+            
+            if (matchingUser) {
+              console.log('Account found in Firestore (case-insensitive match)');
+              const userData = matchingUser.data();
+              console.log('User data:', { email: userData.email, uid: userData.uid });
+              accountFound = true;
+              firestoreCheckResult = true;
+            } else {
+              console.log('No account found in Firestore either');
+            }
+          }
+        } catch (firestoreError) {
+          console.error('Firestore check failed:', firestoreError);
+          console.error('Firestore error code:', firestoreError.code);
+          console.error('Firestore error message:', firestoreError.message);
+        }
+      }
+      
+      console.log('Final result - accountFound:', accountFound);
+      console.log('Final result - firestoreCheckResult:', firestoreCheckResult);
+      
+      if (accountFound) {
         // Email exists - show success message
+        console.log('Account found with sign-in methods:', signInMethods);
         showAlert(
           'Account Found',
-          `An account exists with the email: ${email.trim()}\n\nYou can now reset your password using the button below.`,
+          `An account exists with the email: ${normalizedEmail}\n\nYou can now reset your password using the button below.`,
           [{ text: 'OK' }]
         );
         setSuccess(true);
       } else {
         // Email doesn't exist
+        console.log('No account found for email:', normalizedEmail);
         showAlert(
           'Account Not Found',
-          `No account found with the email: ${email.trim()}\n\nPlease check your email address or create a new account.`,
+          `No account found with the email: ${normalizedEmail}\n\nPlease check your email address or create a new account.`,
           [
             { text: 'OK' },
             {
@@ -152,7 +340,20 @@ export default function ForgotPasswordScreen() {
       }
     } catch (error) {
       console.error('Error checking email:', error);
-      showAlert('Error', 'Unable to verify email. Please try again.');
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      
+      // Handle specific Firebase errors
+      if (error.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address');
+        showAlert('Invalid Email', 'Please enter a valid email address.');
+      } else if (error.code === 'auth/too-many-requests') {
+        setError('Too many requests. Please try again later.');
+        showAlert('Too Many Requests', 'Too many requests. Please try again later.');
+      } else {
+        setError('Unable to verify email. Please try again.');
+        showAlert('Error', `Unable to verify email: ${error.message || 'Please try again.'}`);
+      }
     } finally {
       setCheckingEmail(false);
     }

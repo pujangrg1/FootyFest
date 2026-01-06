@@ -470,12 +470,51 @@ export const authService = {
   },
 
   // Reset Password
-  resetPassword: async (email) => {
+  resetPassword: async (email, actionCodeSettings = null) => {
     try {
-      await sendPasswordResetEmail(auth, email);
+      console.log('Sending password reset email to:', email);
+      console.log('Platform:', Platform.OS);
+      
+      // Configure action code settings for web (optional but recommended)
+      let settings = actionCodeSettings;
+      if (!settings && Platform.OS === 'web' && typeof window !== 'undefined') {
+        settings = {
+          url: window.location.origin + '/reset-password',
+          handleCodeInApp: false,
+        };
+        console.log('Using action code settings for web:', settings);
+      }
+      
+      if (settings) {
+        await sendPasswordResetEmail(auth, email, settings);
+      } else {
+        console.log('Sending password reset email without action code settings');
+        await sendPasswordResetEmail(auth, email);
+      }
+      
+      console.log('Password reset email sent successfully');
       return { error: null };
     } catch (error) {
-      return { error: error.message };
+      console.error('Error sending password reset email:', error);
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      console.error('Full error object:', error);
+      
+      // Provide more specific error messages
+      let errorMessage = error.message;
+      if (error.code === 'auth/user-not-found') {
+        errorMessage = 'No account found with this email address.';
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Invalid email address.';
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMessage = 'Too many requests. Please try again later.';
+      } else if (error.code === 'auth/invalid-continue-uri') {
+        errorMessage = 'Invalid redirect URL. Please contact support.';
+      } else if (error.code === 'auth/unauthorized-continue-uri') {
+        errorMessage = 'Unauthorized redirect URL. Please contact support.';
+      }
+      
+      return { error: errorMessage };
     }
   },
 

@@ -173,36 +173,62 @@ export default function ForgotPasswordScreen() {
       }
 
       // Send password reset email
-      console.log('Attempting to send password reset email to:', normalizedEmail);
-      const result = await authService.resetPassword(normalizedEmail);
-      console.log('Password reset result:', result);
+      // IMPORTANT: Use original email (not normalized) for password reset
+      // Firebase Auth stores emails in their original case and may require exact match
+      const emailForReset = email.trim(); // Use original case, just trim whitespace
       
-      if (result.error) {
-        console.error('Password reset error:', result.error);
-        setError(result.error);
-        setLoading(false);
+      console.log('=== Starting Password Reset Process ===');
+      console.log('Normalized email (for checking):', normalizedEmail);
+      console.log('Original email input:', email);
+      console.log('Email for reset (original case, trimmed):', emailForReset);
+      console.log('Email validation passed');
+      console.log('About to call authService.resetPassword...');
+      
+      try {
+        // Try with original email first (Firebase Auth may require exact case match)
+        console.log('Attempting reset with original email case:', emailForReset);
+        const result = await authService.resetPassword(emailForReset);
+        console.log('=== Password Reset Result ===');
+        console.log('Result object:', result);
+        console.log('Result.error:', result.error);
+        console.log('Has error:', !!result.error);
+        console.log('Result type:', typeof result);
         
-        // Show error alert
-        showAlert('Error', result.error);
-      } else {
-        console.log('Password reset email sent successfully');
-        setSuccess(true);
-        setError('');
-        setLoading(false);
-        
-        // Show success message with more details
-        showAlert(
-          'Password Reset Email Sent',
-          `We've sent a password reset link to ${normalizedEmail}.\n\nPlease check your inbox (and spam folder) and follow the instructions to reset your password.\n\nThe link will expire in 1 hour.`,
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                navigation.navigate('Login');
+        if (result && result.error) {
+          console.error('❌ Password reset error:', result.error);
+          setError(result.error);
+          setLoading(false);
+          
+          // Show error alert
+          showAlert('Error', result.error);
+        } else {
+          console.log('✅ Password reset email sent successfully - no errors returned');
+          console.log('Setting success state...');
+          setSuccess(true);
+          setError('');
+          setLoading(false);
+          
+          // Show success message with more details
+          showAlert(
+            'Password Reset Email Sent',
+            `We've sent a password reset link to ${normalizedEmail}.\n\nPlease check your inbox (and spam folder) and follow the instructions to reset your password.\n\nThe link will expire in 1 hour.`,
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  navigation.navigate('Login');
+                },
               },
-            },
-          ]
-        );
+            ]
+          );
+        }
+      } catch (outerError) {
+        console.error('❌ Outer catch block - unexpected error:', outerError);
+        console.error('Error type:', typeof outerError);
+        console.error('Error message:', outerError.message);
+        setError(outerError.message || 'An unexpected error occurred');
+        setLoading(false);
+        showAlert('Error', outerError.message || 'An unexpected error occurred');
       }
     } catch (error) {
       console.error('Error resetting password:', error);

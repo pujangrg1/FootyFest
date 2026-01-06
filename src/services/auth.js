@@ -472,36 +472,99 @@ export const authService = {
   // Reset Password
   resetPassword: async (email, actionCodeSettings = null) => {
     try {
-      console.log('Sending password reset email to:', email);
+      console.log('=== Password Reset Request ===');
+      console.log('Email:', email);
+      console.log('Email type:', typeof email);
+      console.log('Email trimmed:', email?.trim());
       console.log('Platform:', Platform.OS);
+      console.log('Auth object:', auth ? 'exists' : 'null');
+      console.log('Auth app:', auth?.app ? 'exists' : 'null');
       
-      // Configure action code settings for web (optional but recommended)
-      let settings = actionCodeSettings;
-      if (!settings && Platform.OS === 'web' && typeof window !== 'undefined') {
-        settings = {
-          url: window.location.origin + '/reset-password',
-          handleCodeInApp: false,
-        };
-        console.log('Using action code settings for web:', settings);
+      // Validate email format
+      if (!email || !email.trim()) {
+        console.error('Email is empty or invalid');
+        return { error: 'Email address is required.' };
       }
       
-      if (settings) {
-        await sendPasswordResetEmail(auth, email, settings);
-      } else {
-        console.log('Sending password reset email without action code settings');
-        await sendPasswordResetEmail(auth, email);
+      const emailTrimmed = email.trim();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(emailTrimmed)) {
+        console.error('Invalid email format:', emailTrimmed);
+        return { error: 'Invalid email address format.' };
       }
       
-      console.log('Password reset email sent successfully');
-      return { error: null };
+      // Verify auth object is valid
+      if (!auth) {
+        console.error('❌ Auth object is null');
+        return { error: 'Authentication service is not available.' };
+      }
+      
+      if (!auth.app) {
+        console.error('❌ Auth app is null');
+        return { error: 'Firebase app is not initialized.' };
+      }
+      
+      console.log('Auth object verified:', {
+        hasAuth: !!auth,
+        hasApp: !!auth.app,
+        appName: auth.app?.name,
+        currentUser: auth.currentUser?.email || 'none'
+      });
+      
+      // Try without action code settings first (simpler, more reliable)
+      console.log('Attempting to send password reset email WITHOUT action code settings...');
+      console.log('Calling sendPasswordResetEmail with:', {
+        auth: 'auth object',
+        email: emailTrimmed,
+        hasSettings: false
+      });
+      
+      try {
+        const promise = sendPasswordResetEmail(auth, emailTrimmed);
+        console.log('Promise created, awaiting...');
+        await promise;
+        console.log('✅ Promise resolved - Password reset email sent successfully (without action code settings)');
+        console.log('Email should have been sent to:', emailTrimmed);
+        return { error: null };
+      } catch (simpleError) {
+        console.error('❌ Failed without action code settings');
+        console.error('Error code:', simpleError.code);
+        console.error('Error message:', simpleError.message);
+        console.error('Error stack:', simpleError.stack);
+        
+        // If it failed, try with action code settings (only on web)
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && !actionCodeSettings) {
+          console.log('Retrying with action code settings...');
+          try {
+            const settings = {
+              url: window.location.origin,
+              handleCodeInApp: false,
+            };
+            console.log('Using action code settings:', settings);
+            const promise2 = sendPasswordResetEmail(auth, emailTrimmed, settings);
+            console.log('Promise with settings created, awaiting...');
+            await promise2;
+            console.log('✅ Promise resolved - Password reset email sent successfully (with action code settings)');
+            return { error: null };
+          } catch (settingsError) {
+            console.error('❌ Failed with action code settings');
+            console.error('Error code:', settingsError.code);
+            console.error('Error message:', settingsError.message);
+            throw settingsError; // Throw the last error
+          }
+        } else {
+          throw simpleError; // Throw the original error
+        }
+      }
     } catch (error) {
-      console.error('Error sending password reset email:', error);
+      console.error('❌ Error sending password reset email:', error);
       console.error('Error code:', error.code);
       console.error('Error message:', error.message);
-      console.error('Full error object:', error);
+      console.error('Error name:', error.name);
+      console.error('Full error object:', JSON.stringify(error, null, 2));
       
       // Provide more specific error messages
-      let errorMessage = error.message;
+      let errorMessage = error.message || 'Failed to send password reset email.';
       if (error.code === 'auth/user-not-found') {
         errorMessage = 'No account found with this email address.';
       } else if (error.code === 'auth/invalid-email') {
@@ -512,6 +575,8 @@ export const authService = {
         errorMessage = 'Invalid redirect URL. Please contact support.';
       } else if (error.code === 'auth/unauthorized-continue-uri') {
         errorMessage = 'Unauthorized redirect URL. Please contact support.';
+      } else if (error.code === 'auth/missing-continue-uri') {
+        errorMessage = 'Missing redirect URL configuration.';
       }
       
       return { error: errorMessage };

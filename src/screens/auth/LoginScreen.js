@@ -125,6 +125,13 @@ export default function LoginScreen() {
         <Button mode="contained" onPress={onLogin} loading={loading} style={styles.button} contentStyle={styles.buttonContent} labelStyle={styles.buttonLabel}>
           Login
         </Button>
+        <Button 
+          onPress={() => navigation.navigate('ForgotPassword')} 
+          style={styles.forgotPasswordButton}
+          textColor="#6C63FF"
+        >
+          Forgot Password?
+        </Button>
       </View>
         <Button onPress={() => navigation.navigate('Signup')} style={styles.signupButton}>
           Create an account
@@ -211,6 +218,10 @@ const styles = StyleSheet.create({
   },
   signupButton: {
     marginTop: 16,
+  },
+  forgotPasswordButton: {
+    marginTop: 8,
+    marginBottom: 8,
   },
 });
 

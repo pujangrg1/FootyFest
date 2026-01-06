@@ -8,6 +8,7 @@ import { setUser, setProfile, setSelectedRole, clearAuth } from '../store/slices
 import { authService } from '../services/auth';
 import LoginScreen from '../screens/auth/LoginScreen';
 import SignupScreen from '../screens/auth/SignupScreen';
+import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import LoadingScreen from '../screens/auth/LoadingScreen';
 import RoleSelectionScreen from '../screens/auth/RoleSelectionScreen';
 import TournamentListScreen from '../screens/tournament/TournamentListScreen';
@@ -300,12 +301,13 @@ export default function RootNavigator() {
         ) : (
           <Stack.Screen name="App" component={AppComponent} />
         )
-      ) : (
-        <>
-          <Stack.Screen name="Login" component={LoginScreen} />
-          <Stack.Screen name="Signup" component={SignupScreen} />
-        </>
-      )}
+          ) : (
+            <>
+              <Stack.Screen name="Login" component={LoginScreen} />
+              <Stack.Screen name="Signup" component={SignupScreen} />
+              <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+            </>
+          )}
     </Stack.Navigator>
   );
 }

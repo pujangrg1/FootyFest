@@ -3,12 +3,13 @@ import { View, StyleSheet, ScrollView, SafeAreaView, TouchableOpacity, Share, Al
 import { Text, Card, Button, TextInput, Divider, Menu } from 'react-native-paper';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { format } from 'date-fns';
+import { format, startOfDay, parseISO } from 'date-fns';
 import { useSelector, useDispatch } from 'react-redux';
 import { updateTournament, getTournamentById, deleteTournament, updateTournamentTeams, archiveTournament } from '../../services/tournaments';
-import { getMatchesForTournament, createMatchesBatch, updateMatch, deleteMatch, subscribeToMatchesForTournament } from '../../services/matches';
+import { getMatchesForTournament, createMatchesBatch, createMatch, updateMatch, deleteMatch, subscribeToMatchesForTournament } from '../../services/matches';
 import { setTournaments } from '../../store/slices/tournamentsSlice';
 import WebDateTimePicker from '../../components/web/WebDateTimePicker';
+import CalendarPicker from '../../components/web/CalendarPicker';
 import MatchTimer from '../../components/MatchTimer';
 import { showAlert } from '../../utils/alert';
 
@@ -553,10 +554,19 @@ function TeamsTab({ tournament, shareableLink, onShare, onCopy, tournamentId, on
 // Matches Tab Component
 function MatchesTab({ tournament, tournamentId }) {
   const navigation = useNavigation();
+  const dispatch = useDispatch();
+  const { profile, selectedRole } = useSelector((state) => state.auth);
   const [matches, setMatches] = useState([]);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  
+  // Check if user is organizer or admin
+  const isOrganizer = profile?.roles && (
+    Array.isArray(profile.roles) 
+      ? profile.roles.some(role => role.toLowerCase() === 'organizer' || role.toLowerCase() === 'admin')
+      : (profile.roles.toLowerCase() === 'organizer' || profile.roles.toLowerCase() === 'admin')
+  ) || selectedRole?.toLowerCase() === 'organizer' || selectedRole?.toLowerCase() === 'admin';
 
   // Get all teams
   const allTeams = [
@@ -565,6 +575,24 @@ function MatchesTab({ tournament, tournamentId }) {
   ];
   const totalTeams = allTeams.length;
   const needsGroups = totalTeams > 6;
+  
+  // State for manual match creation
+  const [showAddMatchModal, setShowAddMatchModal] = useState(false);
+  const [newMatch, setNewMatch] = useState({
+    team1Id: '',
+    team1Name: '',
+    team2Id: '',
+    team2Name: '',
+    scheduledTime: null,
+    field: '',
+    group: '',
+    title: '',
+    status: 'scheduled',
+  });
+  const [addingMatch, setAddingMatch] = useState(false);
+  const [showTitlePicker, setShowTitlePicker] = useState(false);
+  
+  const matchTitles = ['Group Stage', 'Quarter Final', 'Semi Final', 'Final'];
 
   // Subscribe to real-time match updates
   useEffect(() => {
@@ -767,6 +795,61 @@ function MatchesTab({ tournament, tournamentId }) {
     );
   };
 
+  const handleAddMatch = async () => {
+    if (!newMatch.team1Id || !newMatch.team2Id) {
+      showAlert('Error', 'Please select both teams for the match.');
+      return;
+    }
+
+    if (newMatch.team1Id === newMatch.team2Id) {
+      showAlert('Error', 'Please select two different teams.');
+      return;
+    }
+
+    setAddingMatch(true);
+    try {
+      const matchData = {
+        team1Id: newMatch.team1Id,
+        team1Name: newMatch.team1Name,
+        team2Id: newMatch.team2Id,
+        team2Name: newMatch.team2Name,
+        scheduledTime: newMatch.scheduledTime,
+        field: newMatch.field || null,
+        group: newMatch.group || null,
+        title: newMatch.title || null,
+        status: newMatch.status || 'scheduled',
+      };
+
+      const createdMatch = await createMatch(tournamentId, matchData);
+      
+      // Refresh matches list
+      const updatedMatches = await getMatchesForTournament(tournamentId);
+      setMatches(updatedMatches);
+      
+      // Reset form and close modal
+      setNewMatch({
+        team1Id: '',
+        team1Name: '',
+        team2Id: '',
+        team2Name: '',
+        scheduledTime: null,
+        field: '',
+        group: '',
+        title: '',
+        status: 'scheduled',
+      });
+      setShowTitlePicker(false);
+      setShowAddMatchModal(false);
+      
+      showAlert('Success', 'Match added successfully!');
+    } catch (error) {
+      console.error('Error adding match:', error);
+      showAlert('Error', error.message || 'Failed to add match. Please try again.');
+    } finally {
+      setAddingMatch(false);
+    }
+  };
+
   const deleteMatchHandler = async (matchId) => {
     showAlert(
       'Delete Match',
@@ -915,9 +998,23 @@ function MatchesTab({ tournament, tournamentId }) {
       {/* Matches List */}
       <Card style={styles.detailCard}>
         <Card.Content>
-          <Text variant="titleMedium" style={styles.sectionTitle}>
-            Match Schedule ({matches.length} matches)
-          </Text>
+          <View style={styles.matchesHeader}>
+            <Text variant="titleMedium" style={styles.sectionTitle}>
+              Match Schedule ({matches.length} matches)
+            </Text>
+            {isOrganizer && (
+              <Button
+                mode="outlined"
+                onPress={() => setShowAddMatchModal(true)}
+                style={styles.addMatchButton}
+                icon="plus"
+                textColor="#4CAF50"
+                disabled={allTeams.length < 2}
+              >
+                Add Match
+              </Button>
+            )}
+          </View>
           {matches.length === 0 ? (
             <Text style={styles.emptyText}>No matches generated yet. Use the schedule generator above.</Text>
           ) : (
@@ -1017,6 +1114,12 @@ function MatchesTab({ tournament, tournamentId }) {
                         : 'Tap to set date & time'
                       }
                     </Text>
+                    {match.title && match.title.trim() && (
+                      <View style={styles.matchTitleContainer}>
+                        <Ionicons name="trophy" size={16} color="#ffa500" />
+                        <Text style={styles.matchTitle}>{match.title}</Text>
+                      </View>
+                    )}
                     {match.group && (
                       <Text style={styles.matchGroup}>Group: {match.group}</Text>
                     )}
@@ -1052,6 +1155,229 @@ function MatchesTab({ tournament, tournamentId }) {
           )}
         </Card.Content>
       </Card>
+
+      {/* Add Match Modal */}
+      <Modal
+        visible={showAddMatchModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowAddMatchModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Card style={styles.modalCard}>
+            <Card.Content style={styles.modalCardContent}>
+              <View style={styles.modalHeader}>
+                <Text variant="titleLarge" style={styles.modalTitle}>Add Match</Text>
+                <TouchableOpacity onPress={() => setShowAddMatchModal(false)}>
+                  <Ionicons name="close" size={24} color="#fff" />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView 
+                style={styles.modalContentForm} 
+                contentContainerStyle={styles.modalContentFormContainer}
+                showsVerticalScrollIndicator={true} 
+                nestedScrollEnabled={true}
+              >
+                {/* Team 1 Selection */}
+                <View style={styles.formField}>
+                  <Text style={styles.fieldLabel}>Team 1 *</Text>
+                  <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false} 
+                    style={styles.teamSelectorScrollView}
+                    contentContainerStyle={styles.teamSelectorContainer}
+                  >
+                    {allTeams.map((team) => (
+                      <TouchableOpacity
+                        key={team.id}
+                        style={[
+                          styles.teamSelectorButton,
+                          newMatch.team1Id === team.id && styles.teamSelectorButtonSelected,
+                          team.id === newMatch.team2Id && styles.teamSelectorButtonDisabled
+                        ]}
+                        onPress={() => {
+                          if (team.id !== newMatch.team2Id) {
+                            setNewMatch({
+                              ...newMatch,
+                              team1Id: team.id,
+                              team1Name: team.name,
+                            });
+                          }
+                        }}
+                        disabled={team.id === newMatch.team2Id}
+                      >
+                        <Text style={[
+                          styles.teamSelectorText,
+                          newMatch.team1Id === team.id && styles.teamSelectorTextSelected
+                        ]} numberOfLines={1}>
+                          {team.name}
+                        </Text>
+                        {newMatch.team1Id === team.id && (
+                          <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  {newMatch.team1Name && (
+                    <Text style={styles.selectedTeamText}>Selected: {newMatch.team1Name}</Text>
+                  )}
+                </View>
+
+                {/* Team 2 Selection */}
+                <View style={styles.formField}>
+                  <Text style={styles.fieldLabel}>Team 2 *</Text>
+                  <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false} 
+                    style={styles.teamSelectorScrollView}
+                    contentContainerStyle={styles.teamSelectorContainer}
+                  >
+                    {allTeams.map((team) => (
+                      <TouchableOpacity
+                        key={team.id}
+                        style={[
+                          styles.teamSelectorButton,
+                          newMatch.team2Id === team.id && styles.teamSelectorButtonSelected,
+                          team.id === newMatch.team1Id && styles.teamSelectorButtonDisabled
+                        ]}
+                        onPress={() => {
+                          if (team.id !== newMatch.team1Id) {
+                            setNewMatch({
+                              ...newMatch,
+                              team2Id: team.id,
+                              team2Name: team.name,
+                            });
+                          }
+                        }}
+                        disabled={team.id === newMatch.team1Id}
+                      >
+                        <Text style={[
+                          styles.teamSelectorText,
+                          newMatch.team2Id === team.id && styles.teamSelectorTextSelected
+                        ]} numberOfLines={1}>
+                          {team.name}
+                        </Text>
+                        {newMatch.team2Id === team.id && (
+                          <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  {newMatch.team2Name && (
+                    <Text style={styles.selectedTeamText}>Selected: {newMatch.team2Name}</Text>
+                  )}
+                </View>
+
+                {/* Field (Optional) */}
+                <View style={styles.formField}>
+                  <TextInput
+                    label="Field (Optional)"
+                    value={newMatch.field}
+                    onChangeText={(text) => setNewMatch({ ...newMatch, field: text })}
+                    style={styles.formInput}
+                    theme={{ colors: { onSurface: '#000', primary: '#4CAF50' } }}
+                  />
+                </View>
+
+                {/* Group (Optional) */}
+                <View style={styles.formField}>
+                  <TextInput
+                    label="Group (Optional)"
+                    value={newMatch.group}
+                    onChangeText={(text) => setNewMatch({ ...newMatch, group: text })}
+                    style={styles.formInput}
+                    theme={{ colors: { onSurface: '#000', primary: '#4CAF50' } }}
+                  />
+                </View>
+
+                {/* Title Selection */}
+                <View style={styles.formField}>
+                  <Text style={styles.fieldLabel}>Match Title (Optional)</Text>
+                  <TouchableOpacity
+                    style={styles.titlePickerButton}
+                    onPress={() => setShowTitlePicker(!showTitlePicker)}
+                  >
+                    <Text style={[
+                      styles.titlePickerText,
+                      !newMatch.title && styles.titlePickerPlaceholder
+                    ]}>
+                      {newMatch.title || 'Select Match Title'}
+                    </Text>
+                    <Ionicons 
+                      name={showTitlePicker ? 'chevron-up' : 'chevron-down'} 
+                      size={20} 
+                      color="#6C63FF" 
+                    />
+                  </TouchableOpacity>
+                  
+                  {showTitlePicker && (
+                    <Card style={styles.titlePickerCard}>
+                      <Card.Content>
+                        {matchTitles.map((title) => (
+                          <TouchableOpacity
+                            key={title}
+                            style={[
+                              styles.titleOption,
+                              newMatch.title === title && styles.titleOptionSelected
+                            ]}
+                            onPress={() => {
+                              setNewMatch({ ...newMatch, title: title });
+                              setShowTitlePicker(false);
+                            }}
+                          >
+                            <Text style={[
+                              styles.titleOptionText,
+                              newMatch.title === title && styles.titleOptionTextSelected
+                            ]}>
+                              {title}
+                            </Text>
+                            {newMatch.title === title && (
+                              <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                        <TouchableOpacity
+                          style={styles.titleOption}
+                          onPress={() => {
+                            setNewMatch({ ...newMatch, title: '' });
+                            setShowTitlePicker(false);
+                          }}
+                        >
+                          <Text style={styles.titleOptionText}>None</Text>
+                          {!newMatch.title && (
+                            <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
+                          )}
+                        </TouchableOpacity>
+                      </Card.Content>
+                    </Card>
+                  )}
+                </View>
+              </ScrollView>
+
+              <View style={styles.modalActions}>
+                <Button
+                  mode="outlined"
+                  onPress={() => setShowAddMatchModal(false)}
+                  style={styles.modalButton}
+                  textColor="#fff"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  mode="contained"
+                  onPress={handleAddMatch}
+                  loading={addingMatch}
+                  disabled={addingMatch || !newMatch.team1Id || !newMatch.team2Id}
+                  style={styles.modalButton}
+                >
+                  Add Match
+                </Button>
+              </View>
+            </Card.Content>
+          </Card>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1300,6 +1626,46 @@ function EditForm({ tournament, setTournament, tournamentId, onCancel, onSave })
   const [tempStartDate, setTempStartDate] = useState(null);
   const [tempEndDate, setTempEndDate] = useState(null);
 
+  // Parse ISO date string as local date (not UTC) to avoid timezone shifts
+  const parseLocalDate = (dateInput) => {
+    if (!dateInput) return null;
+    
+    if (dateInput instanceof Date) {
+      // If it's already a Date object, recreate it from local components
+      // to avoid any timezone issues
+      return new Date(dateInput.getFullYear(), dateInput.getMonth(), dateInput.getDate());
+    }
+    
+    if (typeof dateInput === 'string') {
+      // Extract just the date part (YYYY-MM-DD) and create a local date
+      const dateMatch = dateInput.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (dateMatch) {
+        const [, year, month, day] = dateMatch;
+        return new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      }
+      // Fallback: parse and then recreate from local components
+      const parsed = new Date(dateInput);
+      if (!isNaN(parsed.getTime())) {
+        return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+      }
+      return new Date();
+    }
+    
+    return new Date(dateInput);
+  };
+
+  // Convert Date object to date-only string (YYYY-MM-DD) without timezone
+  const formatDateOnly = (date) => {
+    if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+      return null;
+    }
+    // Use local date components to avoid timezone shifts
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const substitutionOptions = [
     'Rolling Substitutions',
     'Limited Substitutions',
@@ -1310,7 +1676,10 @@ function EditForm({ tournament, setTournament, tournamentId, onCancel, onSave })
     if (Platform.OS === 'android') {
       setShowStartDatePicker(false);
       if (event.type !== 'dismissed' && selectedDate) {
-        setTournament({ ...tournament, startDate: selectedDate.toISOString() });
+        const dateOnly = formatDateOnly(selectedDate);
+        if (dateOnly) {
+          setTournament({ ...tournament, startDate: dateOnly });
+        }
       }
     } else {
       if (selectedDate && selectedDate instanceof Date) {
@@ -1323,7 +1692,10 @@ function EditForm({ tournament, setTournament, tournamentId, onCancel, onSave })
     if (Platform.OS === 'android') {
       setShowEndDatePicker(false);
       if (event.type !== 'dismissed' && selectedDate) {
-        setTournament({ ...tournament, endDate: selectedDate.toISOString() });
+        const dateOnly = formatDateOnly(selectedDate);
+        if (dateOnly) {
+          setTournament({ ...tournament, endDate: dateOnly });
+        }
       }
     } else {
       if (selectedDate && selectedDate instanceof Date) {
@@ -1334,7 +1706,10 @@ function EditForm({ tournament, setTournament, tournamentId, onCancel, onSave })
 
   const handleStartDateDone = () => {
     if (tempStartDate instanceof Date) {
-      setTournament({ ...tournament, startDate: tempStartDate.toISOString() });
+      const dateOnly = formatDateOnly(tempStartDate);
+      if (dateOnly) {
+        setTournament({ ...tournament, startDate: dateOnly });
+      }
     }
     setShowStartDatePicker(false);
     setTempStartDate(null);
@@ -1342,7 +1717,10 @@ function EditForm({ tournament, setTournament, tournamentId, onCancel, onSave })
 
   const handleEndDateDone = () => {
     if (tempEndDate instanceof Date) {
-      setTournament({ ...tournament, endDate: tempEndDate.toISOString() });
+      const dateOnly = formatDateOnly(tempEndDate);
+      if (dateOnly) {
+        setTournament({ ...tournament, endDate: dateOnly });
+      }
     }
     setShowEndDatePicker(false);
     setTempEndDate(null);
@@ -1366,14 +1744,16 @@ function EditForm({ tournament, setTournament, tournamentId, onCancel, onSave })
       />
       
       <Pressable onPress={() => {
-        const initialDate = tournament.startDate ? new Date(tournament.startDate) : new Date();
+        const initialDate = tournament.startDate 
+          ? startOfDay(parseLocalDate(tournament.startDate)) 
+          : startOfDay(new Date());
         setTempStartDate(initialDate);
         setShowStartDatePicker(true);
       }}>
         <View pointerEvents="none">
           <TextInput
             label="Start Date *"
-            value={tournament.startDate ? format(new Date(tournament.startDate), 'MM/dd/yyyy') : ''}
+            value={tournament.startDate ? format(parseLocalDate(tournament.startDate), 'MM/dd/yyyy') : ''}
             placeholder="mm/dd/yyyy"
             editable={false}
             right={<TextInput.Icon icon="calendar" />}
@@ -1383,7 +1763,57 @@ function EditForm({ tournament, setTournament, tournamentId, onCancel, onSave })
         </View>
       </Pressable>
 
-      {Platform.OS === 'ios' ? (
+      {Platform.OS === 'web' ? (
+        <Modal
+          visible={showStartDatePicker}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => {
+            setShowStartDatePicker(false);
+            setTempStartDate(null);
+          }}
+        >
+          <Pressable
+            style={styles.modalOverlay}
+            onPress={() => {
+              setShowStartDatePicker(false);
+              setTempStartDate(null);
+            }}
+          >
+            <Pressable 
+              style={styles.calendarModalContent}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.calendarModalHeader}>
+                <Text style={styles.calendarModalTitle}>Select Start Date</Text>
+                <Button onPress={() => {
+                  setShowStartDatePicker(false);
+                  setTempStartDate(null);
+                }}>Close</Button>
+              </View>
+              <CalendarPicker
+                value={tempStartDate || (tournament.startDate ? startOfDay(parseLocalDate(tournament.startDate)) : startOfDay(new Date()))}
+                onChange={(event, date) => {
+                  if (date && date instanceof Date) {
+                    const normalizedDate = startOfDay(date);
+                    setTempStartDate(normalizedDate);
+                    // Store as date-only string (YYYY-MM-DD) to avoid timezone issues
+                    const dateOnly = formatDateOnly(normalizedDate);
+                    if (dateOnly) {
+                      setTournament({ ...tournament, startDate: dateOnly });
+                    }
+                  }
+                }}
+                onClose={() => {
+                  setShowStartDatePicker(false);
+                  setTempStartDate(null);
+                }}
+                minimumDate={startOfDay(new Date())}
+              />
+            </Pressable>
+          </Pressable>
+        </Modal>
+      ) : Platform.OS === 'ios' ? (
         <Modal
           visible={showStartDatePicker}
           transparent={true}
@@ -1433,14 +1863,18 @@ function EditForm({ tournament, setTournament, tournamentId, onCancel, onSave })
       )}
 
       <Pressable onPress={() => {
-        const initialDate = tournament.endDate ? new Date(tournament.endDate) : (tournament.startDate ? new Date(tournament.startDate) : new Date());
+        const initialDate = tournament.endDate 
+          ? startOfDay(parseLocalDate(tournament.endDate))
+          : (tournament.startDate 
+            ? startOfDay(parseLocalDate(tournament.startDate))
+            : startOfDay(new Date()));
         setTempEndDate(initialDate);
         setShowEndDatePicker(true);
       }}>
         <View pointerEvents="none">
           <TextInput
             label="End Date *"
-            value={tournament.endDate ? format(new Date(tournament.endDate), 'MM/dd/yyyy') : ''}
+            value={tournament.endDate ? format(parseLocalDate(tournament.endDate), 'MM/dd/yyyy') : ''}
             placeholder="mm/dd/yyyy"
             editable={false}
             right={<TextInput.Icon icon="calendar" />}
@@ -1450,7 +1884,61 @@ function EditForm({ tournament, setTournament, tournamentId, onCancel, onSave })
         </View>
       </Pressable>
 
-      {Platform.OS === 'ios' ? (
+      {Platform.OS === 'web' ? (
+        <Modal
+          visible={showEndDatePicker}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => {
+            setShowEndDatePicker(false);
+            setTempEndDate(null);
+          }}
+        >
+          <Pressable
+            style={styles.modalOverlay}
+            onPress={() => {
+              setShowEndDatePicker(false);
+              setTempEndDate(null);
+            }}
+          >
+            <Pressable 
+              style={styles.calendarModalContent}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.calendarModalHeader}>
+                <Text style={styles.calendarModalTitle}>Select End Date</Text>
+                <Button onPress={() => {
+                  setShowEndDatePicker(false);
+                  setTempEndDate(null);
+                }}>Close</Button>
+              </View>
+              <CalendarPicker
+                value={tempEndDate || (tournament.endDate 
+                  ? startOfDay(parseLocalDate(tournament.endDate))
+                  : (tournament.startDate 
+                    ? startOfDay(parseLocalDate(tournament.startDate))
+                    : startOfDay(new Date())))}
+                onChange={(event, date) => {
+                  if (date && date instanceof Date) {
+                    const normalizedDate = startOfDay(date);
+                    setTempEndDate(normalizedDate);
+                    // Store as date-only string (YYYY-MM-DD) to avoid timezone issues
+                    const dateOnly = formatDateOnly(normalizedDate);
+                    if (dateOnly) {
+                      setTournament({ ...tournament, endDate: dateOnly });
+                    }
+                  }
+                }}
+                onClose={() => {
+                  setShowEndDatePicker(false);
+                  setTempEndDate(null);
+                }}
+                minimumDate={tournament.startDate ? startOfDay(parseLocalDate(tournament.startDate)) : startOfDay(new Date())}
+              />
+            </Pressable>
+          </Pressable>
+        </Modal>
+      ) : Platform.OS === 'ios' ? (
         <Modal
           visible={showEndDatePicker}
           transparent={true}
@@ -1930,11 +2418,177 @@ const styles = StyleSheet.create({
     height: 216,
     backgroundColor: '#fff',
   },
+  matchesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  addMatchButton: {
+    borderColor: '#4CAF50',
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  modalCard: {
+    backgroundColor: '#1a1a2e',
+    borderRadius: 12,
+    width: '90%',
+    maxWidth: 500,
+    maxHeight: '90%',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a3e',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  modalCardContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+    flex: 1,
+  },
+  modalContentForm: {
+    flexShrink: 1,
+    paddingVertical: 8,
+    maxHeight: 400,
+  },
+  modalContentFormContainer: {
+    paddingBottom: 8,
+  },
+  formField: {
+    marginBottom: 20,
+  },
+  fieldLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  teamSelectorScrollView: {
+    marginTop: 8,
+    marginBottom: 8,
+    maxHeight: 80,
+  },
+  teamSelectorContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 16,
+  },
+  selectedTeamText: {
+    color: '#4CAF50',
+    fontSize: 12,
+    marginTop: 8,
+    fontStyle: 'italic',
+  },
+  teamSelectorButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: '#0f0f1e',
+    borderWidth: 1,
+    borderColor: '#2a2a3e',
+    gap: 8,
+    minWidth: 100,
+  },
+  teamSelectorButtonSelected: {
+    backgroundColor: '#4CAF50',
+    borderColor: '#4CAF50',
+  },
+  teamSelectorButtonDisabled: {
+    opacity: 0.5,
+    backgroundColor: '#0f0f1e',
+  },
+  teamSelectorText: {
+    color: '#ccc',
+    fontSize: 14,
+    flex: 1,
+  },
+  teamSelectorTextSelected: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  formInput: {
+    backgroundColor: '#fff',
+    marginTop: 8,
+  },
+  titlePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    borderRadius: 8,
+    backgroundColor: '#0f0f1e',
+    borderWidth: 1,
+    borderColor: '#2a2a3e',
+    marginTop: 8,
+  },
+  titlePickerText: {
+    color: '#fff',
+    fontSize: 14,
+    flex: 1,
+  },
+  titlePickerPlaceholder: {
+    color: '#888',
+  },
+  titlePickerCard: {
+    backgroundColor: '#0f0f1e',
+    marginTop: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2a2a3e',
+  },
+  titleOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a3e',
+  },
+  titleOptionSelected: {
+    backgroundColor: '#1a1a2e',
+  },
+  titleOptionText: {
+    color: '#ccc',
+    fontSize: 14,
+    flex: 1,
+  },
+  titleOptionTextSelected: {
+    color: '#4CAF50',
+    fontWeight: '600',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#2a2a3e',
+    flexShrink: 0,
+  },
+  modalButton: {
+    minWidth: 100,
   },
   modalContent: {
     backgroundColor: '#fff',
@@ -1942,12 +2596,6 @@ const styles = StyleSheet.create({
     padding: 20,
     width: '80%',
     maxWidth: 400,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#000',
   },
   modalOption: {
     padding: 16,
@@ -2114,6 +2762,18 @@ const styles = StyleSheet.create({
     color: '#4CAF50',
     fontSize: 14,
     marginTop: 4,
+  },
+  matchTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 4,
+    gap: 6,
+  },
+  matchTitle: {
+    color: '#ffa500',
+    fontSize: 14,
+    fontWeight: '600',
   },
   matchGroup: {
     color: '#ccc',
@@ -2287,6 +2947,25 @@ const styles = StyleSheet.create({
     color: '#ccc',
     textAlign: 'center',
     padding: 20,
+  },
+  calendarModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '90%',
+  },
+  calendarModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  calendarModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
   },
 });
 

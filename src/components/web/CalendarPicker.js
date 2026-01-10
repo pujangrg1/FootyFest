@@ -1,11 +1,78 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Platform } from 'react-native';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, getDay, startOfWeek, endOfWeek } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, getDay, startOfWeek, endOfWeek, isBefore, isAfter } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function CalendarPicker({ value, onChange, onClose, minimumDate, maximumDate }) {
-  const [currentMonth, setCurrentMonth] = useState(value || new Date());
-  const [selectedDate, setSelectedDate] = useState(value || new Date());
+  // Normalize dates to midnight for comparison - parse as local date, not UTC
+  const normalizeDate = (date) => {
+    if (!date) return null;
+    let d;
+    
+    // First, try to convert to ISO string to check if it's an ISO date string
+    let isoString = null;
+    if (typeof date === 'string') {
+      isoString = date;
+    } else if (date instanceof Date) {
+      // Convert Date to ISO string to extract the date part
+      isoString = date.toISOString();
+      } else {
+        // Try to convert to string first
+        const tempDate = new Date(date);
+        if (!isNaN(tempDate.getTime())) {
+          isoString = tempDate.toISOString();
+        } else {
+          const today = new Date();
+          return new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+        }
+      }
+    
+    // Extract just the date part (YYYY-MM-DD) from ISO string and create a local date
+    if (isoString) {
+      const dateMatch = isoString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (dateMatch) {
+        const [, year, month, day] = dateMatch;
+        d = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+      } else {
+        // Fallback: try to parse normally but then normalize
+        const parsed = new Date(isoString);
+        if (!isNaN(parsed.getTime())) {
+          // Extract date parts from UTC representation to avoid timezone issues
+          const utcYear = parsed.getUTCFullYear();
+          const utcMonth = parsed.getUTCMonth();
+          const utcDay = parsed.getUTCDate();
+          d = new Date(utcYear, utcMonth, utcDay);
+        } else {
+          d = new Date();
+        }
+      }
+    } else {
+      d = new Date();
+    }
+    
+    // Ensure the date is at local midnight without timezone conversion
+    if (d && !isNaN(d.getTime())) {
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    }
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+  };
+
+  const initialDate = normalizeDate(value) || (() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
+  })();
+  const [currentMonth, setCurrentMonth] = useState(initialDate);
+  const [selectedDate, setSelectedDate] = useState(initialDate);
+
+  // Sync with value prop when it changes
+  useEffect(() => {
+    const normalizedValue = normalizeDate(value);
+    if (normalizedValue) {
+      setSelectedDate(normalizedValue);
+      setCurrentMonth(normalizedValue);
+    }
+  }, [value]);
 
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
@@ -17,7 +84,9 @@ export default function CalendarPicker({ value, onChange, onClose, minimumDate, 
 
   const handleDateSelect = (date) => {
     // Update selected date but don't save yet - wait for Done button
-    setSelectedDate(date);
+    // Normalize to local midnight without timezone conversion
+    const normalizedDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+    setSelectedDate(normalizedDate);
   };
 
   const handlePrevMonth = () => {
@@ -29,8 +98,19 @@ export default function CalendarPicker({ value, onChange, onClose, minimumDate, 
   };
 
   const isDateDisabled = (date) => {
-    if (minimumDate && date < minimumDate) return true;
-    if (maximumDate && date > maximumDate) return true;
+    // Normalize dates to local midnight for comparison
+    const normalizedDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+    const normalizedMin = minimumDate ? (() => {
+      const d = minimumDate instanceof Date ? minimumDate : new Date(minimumDate);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    })() : null;
+    const normalizedMax = maximumDate ? (() => {
+      const d = maximumDate instanceof Date ? maximumDate : new Date(maximumDate);
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    })() : null;
+    
+    if (normalizedMin && isBefore(normalizedDate, normalizedMin)) return true;
+    if (normalizedMax && isAfter(normalizedDate, normalizedMax)) return true;
     return false;
   };
 
@@ -69,36 +149,41 @@ export default function CalendarPicker({ value, onChange, onClose, minimumDate, 
       </View>
 
       <View style={styles.calendarGrid}>
-        {days.map((day, index) => {
-          const disabled = isDateDisabled(day);
-          const selected = isDateSelected(day);
-          const inCurrentMonth = isCurrentMonth(day);
-          
-          return (
-            <TouchableOpacity
-              key={index}
-              style={[
-                styles.dayCell,
-                !inCurrentMonth && styles.dayCellOtherMonth,
-                selected && styles.dayCellSelected,
-                disabled && styles.dayCellDisabled,
-              ]}
-              onPress={() => !disabled && handleDateSelect(day)}
-              disabled={disabled}
-            >
-              <Text
-                style={[
-                  styles.dayText,
-                  !inCurrentMonth && styles.dayTextOtherMonth,
-                  selected && styles.dayTextSelected,
-                  disabled && styles.dayTextDisabled,
-                ]}
-              >
-                {format(day, 'd')}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+        {Array.from({ length: Math.ceil(days.length / 7) }, (_, weekIndex) => (
+          <View key={weekIndex} style={styles.weekRow}>
+            {days.slice(weekIndex * 7, weekIndex * 7 + 7).map((day, dayIndex) => {
+              const disabled = isDateDisabled(day);
+              const selected = isDateSelected(day);
+              const inCurrentMonth = isCurrentMonth(day);
+              const globalIndex = weekIndex * 7 + dayIndex;
+              
+              return (
+                <TouchableOpacity
+                  key={`day-${globalIndex}-${format(day, 'yyyy-MM-dd')}`}
+                  style={[
+                    styles.dayCell,
+                    !inCurrentMonth && styles.dayCellOtherMonth,
+                    selected && styles.dayCellSelected,
+                    disabled && styles.dayCellDisabled,
+                  ]}
+                  onPress={() => !disabled && handleDateSelect(day)}
+                  disabled={disabled}
+                >
+                  <Text
+                    style={[
+                      styles.dayText,
+                      !inCurrentMonth && styles.dayTextOtherMonth,
+                      selected && styles.dayTextSelected,
+                      disabled && styles.dayTextDisabled,
+                    ]}
+                  >
+                    {format(day, 'd')}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ))}
       </View>
 
       <View style={styles.footer}>
@@ -107,9 +192,10 @@ export default function CalendarPicker({ value, onChange, onClose, minimumDate, 
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => {
-            // When Done is clicked, use the selected date
+            // When Done is clicked, use the selected date (normalize to local midnight)
             if (onChange && selectedDate) {
-              onChange(null, selectedDate);
+              const normalizedDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 0, 0, 0, 0);
+              onChange(null, normalizedDate);
             }
             if (onClose) onClose();
           }}
@@ -128,7 +214,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     width: '100%',
-    maxWidth: 350,
+    maxWidth: 400,
+    minWidth: 280,
   },
   header: {
     flexDirection: 'row',
@@ -161,16 +248,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   calendarGrid: {
+    width: '100%',
+  },
+  weekRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    width: '100%',
+    justifyContent: 'space-between',
+    marginBottom: 2,
   },
   dayCell: {
-    width: '14.28%',
+    flex: 1,
     aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,
-    margin: 2,
+    marginHorizontal: 1,
+    maxWidth: '14.28%',
   },
   dayCellOtherMonth: {
     opacity: 0.3,

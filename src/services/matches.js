@@ -65,6 +65,7 @@ export async function createMatch(tournamentId, matchData) {
     status: matchData.status || 'scheduled',
     group: matchData.group || null,
     round: matchData.round || null,
+    title: matchData.title || null,
     score1: matchData.score1 || null,
     score2: matchData.score2 || null,
     createdAt: serverTimestamp(),
